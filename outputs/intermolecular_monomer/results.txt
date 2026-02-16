@@ -1,0 +1,20 @@
+# Intermolecular Coupling Results
+# monomer: inputs/monomer.txt
+# dielectric = 1.0
+# N = 2 monomers
+#
+# Placements
+#   Mon 1: pos=(0.0000, 0.0000, 0.0000)  axis=(1.0000, 0.0000, 0.0000)  angle=0.0000 deg
+#   Mon 2: pos=(15.0000, 0.0000, 0.0000)  axis=(1.0000, 0.0000, 0.0000)  angle=60.0000 deg
+#
+# Transition dipoles
+#   Mon 1: |mu| = 10.2959 D   mu = (-0.000000, 0.000000, 2.143550) e*Ang
+#   Mon 2: |mu| = 10.2959 D   mu = (-0.000000, -1.856369, 1.071775) e*Ang
+#
+# Pair 1-2   R = 15.0000 Ang
+# Method                    J (cm^-1)         J (eV)
+# --------------------------------------------------
+  Coulomb                     78.1970     0.00969520
+  Point-dipole                79.0586     0.00980202
+  Extended-dipole             62.2634     0.00771968
+#

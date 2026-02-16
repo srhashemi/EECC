@@ -1,0 +1,16 @@
+# Intramolecular Coupling Results
+# charges: inputs/tresp.txt
+# dielectric = 1.0
+# scale = 1.4
+#
+# Transition dipoles
+#   Frag 1 (atoms 1-56,113-120): |mu| = 5.3495 D   mu = (1.054940, 0.123817, 0.334925) e*Ang
+#   Frag 2 (atoms 57-112,121-128): |mu| = 5.3551 D   mu = (1.056067, -0.123777, 0.335303) e*Ang
+#
+# Pair 1-2   R = 8.7058 Ang
+# Method                    J (cm^-1)         J (eV)
+# --------------------------------------------------
+  Coulomb                  -1115.3991    -0.13829186
+  Point-dipole              -382.0920    -0.04737336
+  Extended-dipole           -444.2961    -0.05508569
+#

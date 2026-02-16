@@ -1,0 +1,21 @@
+# TDC Coupling Results — Two Monomer Cubes
+# cubeA: inputs/monomer1.cub
+# cubeB: inputs/monomer2.cub
+# dielectric = 1.0
+#
+# Transition dipoles
+#   |mu_A| = 9.8592 D    mu_A = (0.013504, -0.009941, -2.052561) e*Ang
+#   |mu_B| = 10.5484 D    mu_B = (0.070481, -0.763246, 2.058009) e*Ang
+#   R_AB = 7.783732 Ang
+#
+# Grid A: (110, 142, 114),  spacing (0.136716, 0.136716, 0.136716) Ang
+# Grid B: (110, 142, 114),  spacing (0.136711, 0.136711, 0.136711) Ang
+# FFT pad factor = 3
+# Direct threshold = 0.0005  (voxels: A=93,775, B=94,379,  capture: A=98.9%, B=98.9%)
+#
+# Method                      J (cm^-1)         J (eV)   Time (s)
+# ------------------------------------------------------------
+  Point-dipole               -1033.6457    -0.12815574        ---
+  Extended-dipole            -1021.1951    -0.12661206        ---
+  TDC (FFT)                  -1396.3188    -0.17312147        5.3
+  TDC (direct)               -1399.5202    -0.17351839       53.3

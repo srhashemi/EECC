@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=42.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eecc"
+version = "1.0.0"
+description = "Exciton-Exciton Coupling Calculator"
+license = "MIT"
+authors = [
+    { name = "S. Rasoul Hashemi" },
+]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.21", "scipy>=1.7"]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.5"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+eecc = "eecc.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
