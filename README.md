@@ -30,7 +30,9 @@ pip install -e ".[dev]"
 
 ## CLI Usage
 
-After installation the `eecc` command is available with these subcommands:
+After installation the `eecc` command is available with these subcommands.
+Workflow commands look up input files inside `inputs/` and write results to
+`outputs/`, relative to the current directory, so run them from the repository root.
 
 ### TDC coupling from two monomer cube files
 
@@ -45,6 +47,15 @@ Runs four coupling methods and prints a comparison table:
 
 Results with timing are printed and saved to `outputs/TDC_two_monomer_results.txt`.
 
+Example with the bundled BODIPY dimer fragment cubes (see [Example data](#example-data)):
+
+```bash
+eecc tdc-two-monomers BOPIDY_DIM-s-TD-WB97XD-631Gd-f1.cub BOPIDY_DIM-s-TD-WB97XD-631Gd-f2.cub --pad 3 --threshold 0.0005
+```
+
+This gives |J| ≈ 990 cm⁻¹ (TDC, FFT). The sign is arbitrary because the phase
+of each fragment's transition density is arbitrary.
+
 ### TDC coupling from a single dimer cube
 
 ```bash
@@ -57,31 +68,34 @@ each grid point to the nearest atom in each fragment, then computes TDC coupling
 ### Intramolecular coupling from a charge file
 
 ```bash
-eecc intramolecular tresp.txt --frags "1-56,113-120" "57-112,121-128" --scale 1.4
+eecc intramolecular Combinedfragmentschargef1-1-65-f2-66-130.txt --frags "1-65" "66-130" --scale 1.4
 ```
 
 Computes pairwise Coulomb (TrESP), point-dipole, and extended-dipole couplings
 between fragments defined by atom index ranges. Prints a comparison table and
-saves results to `outputs/intramolecular_tresp/results.txt`. Note: Following the Multiwfn manual, a scale of 1.4 is essential for TrESP charges.
+saves results to `outputs/intramolecular_<file>_scaled_<scale>/results.txt`.
+`--scale` divides every charge by the given factor. A scale of 1.4 (≈√2) is used
+for Multiwfn TrESP charges, whose magnitude Multiwfn overestimates by √2.
 
 ```bash
-eecc intramolecular trmulliken.txt --frags "1-56,113-120" "57-112,121-128" 
+eecc intramolecular MullikenCombinedfragmentschargef1-1-65-f2-66-130.txt --frags "1-65" "66-130"
 ```
 
 Computes pairwise Coulomb (TrMulliken), point-dipole, and extended-dipole couplings
 between fragments defined by atom index ranges. Prints a comparison table and
-saves results to `outputs/intramolecular_trmulliken/results.txt`. 
-Fragment indices are 1-based and support ranges, commas, and mixed notation:
+saves results to `outputs/intramolecular_<file>/results.txt`.
+Fragment indices are 1-based and support ranges, commas, and mixed notation
+(`charges.txt` below stands for any charge file in `inputs/`):
 
 ```bash
 # Dimer — each fragment combines two discontinuous ranges
-eecc intramolecular trmulliken.txt --frags "1-56,113-120" "57-112,121-128"
+eecc intramolecular charges.txt --frags "1-56,113-120" "57-112,121-128"
 
 # Trimer — three fragments, three coupling pairs
-eecc intramolecular tresp.txt --frags "1-40,121-128" "41-90" "91-120"
+eecc intramolecular charges.txt --frags "1-40,121-128" "41-90" "91-120"
 
 # With dielectric screening and charge scaling
-eecc intramolecular tresp.txt --frags "1-56,113-120" "57-112,121-128" --dielectric 2.0 --scale 0.72
+eecc intramolecular charges.txt --frags "1-56,113-120" "57-112,121-128" --dielectric 2.0 --scale 1.4
 ```
 
 ### Intermolecular coupling from a monomer file
@@ -205,6 +219,39 @@ atoms_q = fit_tresp_from_cube(
 )
 # atoms_q is a list of (element, x, y, z, charge)
 ```
+
+## Example data
+
+The files in `inputs/` (except `monomer.txt`) are the BODIPY dimer "fragment
+method" data from the dataset accompanying the article cited below:
+
+Ringström, R.; Hashemi, S. R.; Liang, Y.; Hestand, N. J.; Börjesson, K.
+*Supporting data for "Strong exciton coupling: a practical toolbox for computing
+interaction energies, wavefunctions, and optical spectra".* University of
+Gothenburg, 2026. https://doi.org/10.5878/pyja-rd94 (CC BY 4.0)
+
+Each dimer fragment (monomer capped with H at the dimer geometry) was computed
+separately with TD-ωB97X-D/6-31G(d) in Gaussian. Multiwfn was then used to
+generate the transition-density cube and the transition charges.
+
+| File | Content |
+|------|---------|
+| `BOPIDY_DIM-s-TD-WB97XD-631Gd-f1.cub`, `-f2.cub` | S0→S1 transition density of fragments 1 and 2 |
+| `Combinedfragmentschargef1-1-65-f2-66-130.txt` | TrESP charges, fragment 1 = atoms 1–65, fragment 2 = atoms 66–130 |
+| `MullikenCombinedfragmentschargef1-1-65-f2-66-130.txt` | Transition Mulliken charges, same atom order |
+
+Expected couplings (cm⁻¹; sign arbitrary):
+
+| Method | J |
+|--------|---|
+| TDC (FFT / direct) | 990 / 967 |
+| TrESP Coulomb (`--scale 1.4`) | 1141 |
+| TrMulliken Coulomb | 816 |
+
+For comparison, the Davydov splitting of the full dimer at the same level
+(S1 2.812 eV, bright; S2 3.074 eV, dark) gives J ≈ −1057 cm⁻¹.
+
+`monomer.txt` is a single-monomer charge file used for the `intermolecular` example.
 
 ## Testing
 

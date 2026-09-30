@@ -1,0 +1,16 @@
+# Intramolecular Coupling Results
+# charges: inputs/MullikenCombinedfragmentschargef1-1-65-f2-66-130.txt
+# dielectric = 1.0
+# scale = 1.0
+#
+# Transition dipoles
+#   Frag 1 (atoms 1-65): |mu| = 6.3140 D   mu = (1.226770, -0.035845, 0.470923) e*Ang
+#   Frag 2 (atoms 66-130): |mu| = 6.3144 D   mu = (-1.226836, -0.035495, -0.471017) e*Ang
+#
+# Pair 1-2   R = 8.5827 Ang
+# Method                    J (cm^-1)         J (eV)
+# --------------------------------------------------
+  Coulomb                    815.6743     0.10113072
+  Point-dipole               522.8727     0.06482795
+  Extended-dipole            444.5802     0.05512092
+#
