@@ -56,7 +56,8 @@ def read_cube(path: str, units: str = "bohr") -> Dict[str, Any]:
     if data.size != nx * ny * nz:
         raise ValueError(f"Data size mismatch: got {data.size}, expected {nx*ny*nz}")
 
-    rho = data.reshape((nz, ny, nx), order='C').transpose(2, 1, 0).copy()
+    # Gaussian cube data: x is the outermost loop and z the innermost (fastest)
+    rho = data.reshape((nx, ny, nz), order='C')
 
     if units.lower().startswith('bohr'):
         origin = origin * A0_TO_ANG
