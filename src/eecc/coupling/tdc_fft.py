@@ -9,7 +9,9 @@ from scipy.fft import fftn, ifftn, fftfreq
 from scipy.interpolate import RegularGridInterpolator
 
 from eecc.constants import EV_TO_CM, KE_EV_ANG, DEBYE_PER_EANG
-from eecc.io.cube import grid_spacing, build_axes_coordinates
+from eecc.io.cube import (
+    grid_spacing, build_axes_coordinates, cube_atom_centroid, voxel_volume,
+)
 from eecc.coupling.dipole import extended_dipole_coupling_formula, point_dipole_coupling
 
 
@@ -150,8 +152,8 @@ def tdc_coupling_fft(
     Returns a dict with J_eV, J_cm1, transition dipoles, and point-dipole
     and extended-dipole comparison values.
     """
-    # Physical separation (origin-to-origin)
-    Rvec_phys = np.asarray(cubeB['origin'], float) - np.asarray(cubeA['origin'], float)
+    # Separation between the monomers (atom centroid to atom centroid)
+    Rvec_phys = cube_atom_centroid(cubeB) - cube_atom_centroid(cubeA)
 
     # Transition dipoles (computed independently on each cube)
     muA = transition_dipole_from_cube(cubeA)
@@ -168,9 +170,12 @@ def tdc_coupling_fft(
     # --- Interpolate V_B at cubeA's grid positions ---
     VB_at_A = _interpolate_potential(V_padded, V_origin, dxB, dyB, dzB, cubeA)
 
-    # --- TDC Coulomb coupling: J = k_e * Σ ρ_A · V_B ---
+    # --- TDC Coulomb coupling: J = k_e * Σ ρ_A · φ_B · dV_A ---
+    # V_padded carries a factor dV_B (it is built from ρ_B·dV_B), so rescale
+    # by dV_A/dV_B to integrate over cubeA's voxels.
     rhoA = cubeA['rho']
-    J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * VB_at_A))
+    dV_ratio = voxel_volume(cubeA) / voxel_volume(cubeB)
+    J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * VB_at_A)) * dV_ratio
     J_cm1 = J_eV * EV_TO_CM
 
     dx, dy, dz = grid_spacing(cubeA)
