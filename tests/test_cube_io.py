@@ -9,7 +9,10 @@ from eecc.io.cube import (
     build_axes_coordinates,
     cube_atom_centroid,
     harmonize_cubes_inplace,
+    read_cube,
 )
+from eecc.constants import A0_TO_ANG
+from eecc.coupling.tdc_fft import transition_dipole_from_cube
 
 
 def test_grid_spacing(sample_cube):
@@ -83,3 +86,56 @@ def test_density_overlap_integration(sample_cube):
     dV = dx * dy * dz
     result = float(np.sum(overlap) * dV)
     assert result > 0  # self-overlap must be positive
+
+
+def _write_gaussian_cube(path, rho, origin, step, atoms):
+    """Write *rho* (nx, ny, nz) in Gaussian cube layout (z fastest, 6 values per line)."""
+    nx, ny, nz = rho.shape
+    lines = ["test cube", "written by test suite",
+             f"{len(atoms):5d} {origin[0]:12.6f} {origin[1]:12.6f} {origin[2]:12.6f}",
+             f"{nx:5d} {step:12.6f} {0.0:12.6f} {0.0:12.6f}",
+             f"{ny:5d} {0.0:12.6f} {step:12.6f} {0.0:12.6f}",
+             f"{nz:5d} {0.0:12.6f} {0.0:12.6f} {step:12.6f}"]
+    for Z, x, y, z in atoms:
+        lines.append(f"{Z:5d} {float(Z):12.6f} {x:12.6f} {y:12.6f} {z:12.6f}")
+    for ix in range(nx):
+        for iy in range(ny):
+            row = rho[ix, iy, :]
+            for k in range(0, nz, 6):
+                lines.append("".join(f"{v:13.5E}" for v in row[k:k + 6]))
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_read_cube_data_ordering(tmp_path):
+    """Values must land at rho[ix, iy, iz] for a Gaussian (z-fastest) cube.
+
+    Unequal grid dimensions make any axis mix-up detectable.
+    """
+    nx, ny, nz = 3, 4, 7
+    ix, iy, iz = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
+    rho = (100 * ix + 10 * iy + iz + 1).astype(float)
+    path = tmp_path / "order.cub"
+    _write_gaussian_cube(path, rho, (0.0, 0.0, 0.0), 0.5, [(6, 0.0, 0.0, 0.0)])
+
+    cube = read_cube(str(path), units="angstrom")
+    assert cube["nv"] == (nx, ny, nz)
+    np.testing.assert_allclose(cube["rho"], rho)
+
+
+def test_read_cube_dipole_direction(tmp_path):
+    """A density displaced along +x must give a transition dipole along +x."""
+    nx, ny, nz = 21, 17, 13
+    step = 0.3  # Bohr
+    origin = -step * (np.array([nx, ny, nz]) - 1) / 2.0
+    xs, ys, zs = (origin[i] + step * np.arange(n) for i, n in enumerate((nx, ny, nz)))
+    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+    rho = X * np.exp(-(X**2 + Y**2 + Z**2))  # p_x-like transition density
+    path = tmp_path / "px.cub"
+    _write_gaussian_cube(path, rho, origin, step, [(6, 0.0, 0.0, 0.0)])
+
+    cube = read_cube(str(path), units="bohr")
+    assert abs(cube["vx"][0] - step * A0_TO_ANG) < 1e-6
+    mu = transition_dipole_from_cube(cube)["mu"]
+    assert mu[0] > 0
+    assert abs(mu[1]) < 1e-3 * mu[0]
+    assert abs(mu[2]) < 1e-3 * mu[0]
