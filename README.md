@@ -222,6 +222,28 @@ pytest tests/ -v
 | matplotlib | >= 3.5   | Visualization    |
 | pytest     | >= 7.0   | Testing          |
 
+## Citation
+
+If you use this software in your research, please cite:
+
+Ringström, R.; Hashemi, S. R.; Liang, Y.; Hestand, N. J.; Börjesson, K.
+*Strong exciton coupling: a practical toolbox for computing interaction energies, wavefunctions, and optical spectra.*
+**Chem. Soc. Rev.** 2026, **55** (12), 6462–6499.
+https://doi.org/10.1039/d6cs00157b
+
+```bibtex
+@article{ringstrom2026strong,
+  title={Strong exciton coupling: a practical toolbox for computing interaction energies, wavefunctions, and optical spectra},
+  author={Ringstr{\"o}m, Rasmus and Hashemi, S Rasoul and Liang, Yuanxin and Hestand, Nicholas J and B{\"o}rjesson, Karl},
+  journal={Chemical Society Reviews},
+  volume={55},
+  number={12},
+  pages={6462--6499},
+  year={2026},
+  publisher={The Royal Society of Chemistry}
+}
+```
+
 ## Author
 
 S. Rasoul Hashemi
