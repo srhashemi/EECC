@@ -219,3 +219,6 @@ def test_slurm_dry_run(tmp_path):
     frag = open(scripts[1]).read()
     assert "#SBATCH --array=1-2" in frag and "#SBATCH -A proj-1" in frag
     assert "--stage td --fragment $SLURM_ARRAY_TASK_ID" in frag and "module load x" in frag
+    prep = open(scripts[0]).read()
+    assert "#SBATCH -c 1" in prep  # no optimization: the prep job only splits fragments
+    assert "#SBATCH -c 32" in frag and "#SBATCH --mem=28G" in frag

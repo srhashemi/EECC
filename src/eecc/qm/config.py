@@ -106,8 +106,13 @@ class ResourcesConfig:
 class SlurmConfig:
     account: Optional[str] = None
     partition: str = "shared"
+    # CPUs/memory for optimization and fragment TDDFT jobs. On partitions that
+    # allocate cores by memory (e.g. Dardel 'shared', ~0.87 GB per core), keep
+    # mem <= cpus x that ratio to avoid being billed for extra cores.
     cpus: int = 32
-    mem: str = "64G"
+    mem: str = "28G"
+    analysis_cpus: int = 8
+    analysis_mem: str = "16G"
     time_opt: str = "24:00:00"
     time_td: str = "04:00:00"
     time_analysis: str = "02:00:00"

@@ -17,7 +17,7 @@ from eecc.qm.pipeline import Pipeline
 
 
 def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
-            array: Optional[str] = None) -> str:
+            cpus: int, mem: str, array: Optional[str] = None) -> str:
     s = pipe.cfg.slurm
     log_dir = os.path.join(pipe.root, "slurm")
     lines = ["#!/bin/bash"]
@@ -27,8 +27,8 @@ def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
         f"#SBATCH -p {s.partition}",
         f"#SBATCH -J {pipe.cfg.name}-{job}",
         "#SBATCH -n 1",
-        f"#SBATCH -c {s.cpus}",
-        f"#SBATCH --mem={s.mem}",
+        f"#SBATCH -c {cpus}",
+        f"#SBATCH --mem={mem}",
         f"#SBATCH -t {time}",
     ]
     out = f"{log_dir}/%x-%A_%a.out" if array else f"{log_dir}/%x-%j.out"
@@ -58,14 +58,18 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     run = f"{shlex.quote(sys.executable)} -m eecc.cli run {shlex.quote(os.path.abspath(config_path))}"
     n = pipe.planned_fragment_count()
 
+    optimizing = pipe.cfg.opt.enabled and pipe.cfg.fragments.mode != "files"
+    prep_res = (s.time_opt, s.cpus, s.mem) if optimizing else ("00:15:00", 1, "2G")
     scripts = {
-        "prep": _script(pipe, "prep", s.time_opt,
-                        [f"{run} --stage opt", f"{run} --stage fragments"]),
+        "prep": _script(pipe, "prep", prep_res[0],
+                        [f"{run} --stage opt", f"{run} --stage fragments"],
+                        cpus=prep_res[1], mem=prep_res[2]),
         "frag": _script(pipe, "frag", s.time_td,
                         [f"{run} --stage td --fragment $SLURM_ARRAY_TASK_ID",
                          f"{run} --stage transition --fragment $SLURM_ARRAY_TASK_ID"],
-                        array=f"1-{n}"),
-        "analysis": _script(pipe, "analysis", s.time_analysis, [f"{run} --stage couplings"]),
+                        cpus=s.cpus, mem=s.mem, array=f"1-{n}"),
+        "analysis": _script(pipe, "analysis", s.time_analysis, [f"{run} --stage couplings"],
+                            cpus=s.analysis_cpus, mem=s.analysis_mem),
     }
     paths = {}
     for key, text in scripts.items():
