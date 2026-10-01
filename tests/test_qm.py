@@ -222,3 +222,18 @@ def test_slurm_dry_run(tmp_path):
     prep = open(scripts[0]).read()
     assert "#SBATCH -c 1" in prep  # no optimization: the prep job only splits fragments
     assert "#SBATCH -c 32" in frag and "#SBATCH --mem=28G" in frag
+
+
+def test_slurm_opt_job_overrides(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.slurm import submit
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, opt={"enabled": True},
+                        slurm={"account": "p", "opt_partition": "main", "opt_cpus": 128,
+                               "opt_mem": "0"})
+    prep, frag, _ = (open(p).read() for p in submit(Pipeline(cfg), str(tmp_path / "c.yaml"),
+                                                    dry_run=True))
+    assert "#SBATCH -p main" in prep and "#SBATCH -c 128" in prep and "#SBATCH --mem=0" in prep
+    assert "#SBATCH -p shared" in frag and "#SBATCH -c 32" in frag

@@ -17,14 +17,15 @@ from eecc.qm.pipeline import Pipeline
 
 
 def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
-            cpus: int, mem: str, array: Optional[str] = None) -> str:
+            cpus: int, mem: str, array: Optional[str] = None,
+            partition: Optional[str] = None) -> str:
     s = pipe.cfg.slurm
     log_dir = os.path.join(pipe.root, "slurm")
     lines = ["#!/bin/bash"]
     if s.account:
         lines.append(f"#SBATCH -A {s.account}")
     lines += [
-        f"#SBATCH -p {s.partition}",
+        f"#SBATCH -p {partition or s.partition}",
         f"#SBATCH -J {pipe.cfg.name}-{job}",
         "#SBATCH -n 1",
         f"#SBATCH -c {cpus}",
@@ -59,11 +60,14 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     n = pipe.planned_fragment_count()
 
     optimizing = pipe.cfg.opt.enabled and pipe.cfg.fragments.mode != "files"
-    prep_res = (s.time_opt, s.cpus, s.mem) if optimizing else ("00:15:00", 1, "2G")
+    if optimizing:
+        prep_res = (s.time_opt, s.opt_cpus or s.cpus, s.opt_mem or s.mem, s.opt_partition)
+    else:
+        prep_res = ("00:15:00", 1, "2G", None)
     scripts = {
         "prep": _script(pipe, "prep", prep_res[0],
                         [f"{run} --stage opt", f"{run} --stage fragments"],
-                        cpus=prep_res[1], mem=prep_res[2]),
+                        cpus=prep_res[1], mem=prep_res[2], partition=prep_res[3]),
         "frag": _script(pipe, "frag", s.time_td,
                         [f"{run} --stage td --fragment $SLURM_ARRAY_TASK_ID",
                          f"{run} --stage transition --fragment $SLURM_ARRAY_TASK_ID"],

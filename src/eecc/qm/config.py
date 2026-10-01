@@ -49,6 +49,7 @@ class OptConfig:
     conv_tol: float = 1e-9
     maxsteps: int = 200
     freq: bool = False
+    memory_mb: Optional[int] = None  # PySCF memory for this stage; default resources.memory_mb
 
 
 @dataclass
@@ -113,6 +114,11 @@ class SlurmConfig:
     mem: str = "28G"
     analysis_cpus: int = 8
     analysis_mem: str = "16G"
+    # Optional overrides for the optimization job, which needs far more memory
+    # than the fragment jobs (e.g. a whole node: opt_partition: main, opt_mem: "0").
+    opt_partition: Optional[str] = None
+    opt_cpus: Optional[int] = None
+    opt_mem: Optional[str] = None
     time_opt: str = "24:00:00"
     time_td: str = "04:00:00"
     time_analysis: str = "02:00:00"

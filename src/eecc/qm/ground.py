@@ -61,7 +61,7 @@ def optimize_geometry(structure: Structure, cfg, workdir: str) -> Tuple[Structur
         structure = start
 
     mol = build_mol(structure, opt.basis, opt.cart, cfg.charge, cfg.spin,
-                    cfg.resources.memory_mb, output=os.path.join(workdir, "opt.log"))
+                    opt.memory_mb or cfg.resources.memory_mb, output=os.path.join(workdir, "opt.log"))
     mf = build_rks(mol, opt.xc, opt.grid, opt.density_fit, opt.conv_tol, opt.disp)
     n_prev = sum(1 for l in open(traj) if l.startswith("cycle")) if os.path.exists(traj) else 0
 
@@ -92,7 +92,7 @@ def harmonic_frequencies(structure: Structure, cfg, workdir: str) -> Dict[str, A
 
     opt = cfg.opt
     mol = build_mol(structure, opt.basis, opt.cart, cfg.charge, cfg.spin,
-                    cfg.resources.memory_mb, output=os.path.join(workdir, "freq.log"))
+                    opt.memory_mb or cfg.resources.memory_mb, output=os.path.join(workdir, "freq.log"))
     mf = build_rks(mol, opt.xc, opt.grid, opt.density_fit, opt.conv_tol, opt.disp)
     mf.kernel()
     hess = mf.Hessian().kernel()
