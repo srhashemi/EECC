@@ -296,3 +296,12 @@ def test_restamp_and_resubmit_skips_finished_stages(tmp_path):
 
     scripts = submit(pipe, str(tmp_path / "c.yaml"), dry_run=True)
     assert [os.path.basename(s) for s in scripts] == ["analysis.sh"]
+
+
+def test_cartesian_rule_follows_gaussian():
+    from eecc.qm.pyscf_setup import use_cartesian
+
+    assert use_cartesian("6-31g(d)", None) and use_cartesian("6-31+G*", None)
+    assert not use_cartesian("6-311g(d,p)", None)
+    assert not use_cartesian("def2-svp", None) and not use_cartesian("sto-3g", None)
+    assert use_cartesian("def2-svp", True)

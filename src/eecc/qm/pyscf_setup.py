@@ -29,10 +29,15 @@ def resolve_xc(xc: str) -> str:
 
 
 def use_cartesian(basis: str, cart: Optional[bool]) -> bool:
-    """Cartesian d functions for Pople bases (Gaussian's 6D default) unless set explicitly."""
+    """Follow Gaussian's defaults unless set explicitly.
+
+    Gaussian uses Cartesian d functions (6D) for Pople bases such as 3-21G and
+    6-31G, but spherical ones (5D) for the 6-311G family and for all other bases.
+    """
     if cart is not None:
         return bool(cart)
-    return bool(_POPLE.match(basis.strip()))
+    b = basis.strip().lower()
+    return bool(_POPLE.match(b)) and not b.startswith("6-311")
 
 
 def set_threads(threads: int) -> int:
