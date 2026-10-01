@@ -129,7 +129,7 @@ class SlurmConfig:
     opt_cpus: Optional[int] = None
     opt_mem: Optional[str] = None
     time_opt: str = "24:00:00"
-    time_td: str = "04:00:00"
+    time_td: str = "12:00:00"  # one fragment TDDFT; ~65-atom chromophores need 5-7 h on 32 cores
     time_analysis: str = "02:00:00"
     setup: List[str] = field(default_factory=list)  # shell lines run before eecc
 
