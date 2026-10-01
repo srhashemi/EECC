@@ -1,0 +1,72 @@
+# Automated pipeline for the covalently linked BODIPY dimer (the paper's fragment method).
+# Run from this directory:  eecc run config.yaml          (everything, locally)
+#                           eecc run config.yaml --slurm  (as Slurm jobs)
+# Paths are relative to this file. Every key below is optional except geometry/fragments;
+# the values shown are the defaults unless marked "example".
+
+name: bodipy-dimer               # example; used in Slurm job names
+geometry: dimer.xyz              # example; oligomer geometry (Å)
+workdir: work
+charge: 0                        # total charge of the oligomer
+spin: 0                          # 2S; only closed-shell systems are supported
+
+fragments:
+  mode: ranges                   # ranges | auto (one fragment per molecule) | files
+  ranges:                        # example; 1-based atom indices of each chromophore
+    - "57-112,121-128"
+    - "1-56,113-120"
+  # files: [f1.xyz, f2.xyz]      # mode 'files': ready-made fragments, no cutting or capping
+  charges: []                    # per-fragment charges; empty = all neutral
+  bond_scale: 1.2                # bonded if d < 1.2 x (sum of covalent radii)
+  cap:                           # bonds between fragments are cut and capped with H
+    element: H                   # placed on the cut bond at an element-specific distance
+    default_bond_length: 1.09
+
+opt:                             # ground-state geometry of the whole oligomer
+  enabled: false                 # example; this geometry is already optimized (default: true)
+  xc: b3lyp
+  basis: def2-svp
+  disp: d3bj
+  grid: [99, 590]
+  density_fit: true
+  maxsteps: 200
+  convergence: gau               # geomeTRIC set: gau, gau_loose, gau_tight, turbomole, ...
+  # thresholds: {energy: 1.0e-5} # override single criteria: energy, grms, gmax (a.u.), drms, dmax (Å)
+  freq: false                    # analytic Hessian + imaginary-mode check (expensive)
+
+td:                              # excited states of each fragment
+  xc: wb97x-d                    # exchange-correlation part of wB97X-D (libxc)
+  basis: 6-31g(d)                # Pople bases use Cartesian d functions (cart: auto), as Gaussian
+  nstates: 10
+  method: tddft                  # tddft (full, like Gaussian TD) or tda
+  state: 1                       # excited state used for the couplings
+  grid: [99, 590]
+  density_fit: false
+
+transition:
+  cube:
+    spacing: 0.25                # Bohr, identical for all fragments
+    margin: 6.0                  # Bohr
+  tresp:
+    shells: [1.4, 1.6, 1.8, 2.0] # Merz-Kollman shells (x vdW radius)
+    density: 5.0                 # points per Å^2
+    dipole_constraint: true      # fitted charges reproduce the TDDFT transition dipole
+
+couplings:
+  methods: [tdc_fft, tresp, mulliken, point_dipole, extended_dipole]  # add tdc_direct to cross-check
+  dielectric: 1.0
+  tdc_pad: 3
+
+resources:
+  threads: 0                     # 0 = OMP_NUM_THREADS / all cores
+  memory_mb: 24000
+
+slurm:
+  account: null                  # set your allocation, e.g. naiss2025-5-749
+  partition: shared
+  cpus: 32
+  mem: 28G
+  time_opt: "24:00:00"
+  time_td: "10:00:00"
+  time_analysis: "02:00:00"
+  setup: []                      # e.g. ["module load cray-python", "source /path/to/venv/bin/activate"]

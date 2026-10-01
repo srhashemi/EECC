@@ -9,7 +9,9 @@ from scipy.fft import fftn, ifftn, fftfreq
 from scipy.interpolate import RegularGridInterpolator
 
 from eecc.constants import EV_TO_CM, KE_EV_ANG, DEBYE_PER_EANG
-from eecc.io.cube import grid_spacing, build_axes_coordinates
+from eecc.io.cube import (
+    grid_spacing, build_axes_coordinates, monomer_separation, voxel_volume,
+)
 from eecc.coupling.dipole import extended_dipole_coupling_formula, point_dipole_coupling
 
 
@@ -134,24 +136,71 @@ def _interpolate_potential(
 # === TDC Coupling (Two Cubes) ===============================
 # ============================================================
 
+# Largest padded free-space grid (points) before tdc_coupling_fft gives up.
+FREE_FFT_MAX_POINTS = 2.5e8
+
+# Mean of 1/r over a cube of unit edge centred at the origin (self-term of the kernel).
+_CUBE_MEAN_INV_R = 2.3800772
+
+
+def _free_space_potential(
+    rhoB: np.ndarray, spacing: Tuple[float, float, float], originB: np.ndarray,
+    target_cube: Dict[str, Any],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Potential of rho_B (e/Å) on a grid covering cubeB and the target cube.
+
+    Hockney's method: the grid is zero-padded to twice its size and convolved
+    with the real-space 1/r kernel, which gives the exact discrete sum
+    sum_j q_j / |r - r_j| without periodic images, however far apart the cubes are.
+    """
+    h = np.asarray(spacing, float)
+    originB = np.asarray(originB, float)
+    lo, hi = originB.copy(), originB + (np.array(rhoB.shape) - 1) * h
+    xs_t, ys_t, zs_t = build_axes_coordinates(target_cube)
+    lo = np.minimum(lo, [xs_t[0], ys_t[0], zs_t[0]])
+    hi = np.maximum(hi, [xs_t[-1], ys_t[-1], zs_t[-1]])
+    # box aligned with cubeB's lattice, one spare point on each side for interpolation
+    shift = np.ceil((originB - lo) / h - 1e-9).astype(int) + 1
+    origin = originB - shift * h
+    n = np.ceil((hi - origin) / h - 1e-9).astype(int) + 2
+    if 8 * np.prod(n.astype(float)) > FREE_FFT_MAX_POINTS:
+        raise ValueError(f"free-space FFT grid {tuple(2 * n)} is too large; use the direct TDC sum")
+
+    q = np.zeros(2 * n)
+    q[shift[0]:shift[0] + rhoB.shape[0], shift[1]:shift[1] + rhoB.shape[1],
+      shift[2]:shift[2] + rhoB.shape[2]] = rhoB * np.prod(h)
+    axes = [np.minimum(np.arange(2 * m), 2 * m - np.arange(2 * m)) * hk for m, hk in zip(n, h)]
+    R = np.sqrt(axes[0][:, None, None] ** 2 + axes[1][None, :, None] ** 2 + axes[2][None, None, :] ** 2)
+    R[0, 0, 0] = 1.0
+    G = 1.0 / R
+    G[0, 0, 0] = _CUBE_MEAN_INV_R / np.cbrt(np.prod(h))
+    V = ifftn(fftn(q) * fftn(G)).real[:n[0], :n[1], :n[2]]
+    return V, origin
+
+
 def tdc_coupling_fft(
     cubeA: Dict[str, Any],
     cubeB: Dict[str, Any],
     dielectric: float = 1.0,
     pad_factor: int = 3,
+    boundary: str = "periodic",
 ) -> Dict[str, Any]:
     """Compute TDC Coulomb coupling between two monomer cubes via FFT.
 
-    Computes V_B on cubeB's own padded grid, then interpolates V_B at
-    cubeA's grid points.  This avoids Fourier-shifting density between
-    grids, which can wrap and corrupt the result when the molecular
-    separation is a significant fraction of the grid size.
+    Computes V_B on a padded grid, then interpolates V_B at cubeA's grid points.
+
+    boundary='periodic' (default, as in the published workflow) uses cubeB's own
+    grid padded by *pad_factor* with a periodic Coulomb kernel. Periodic images of
+    B then add to the potential, and parts of cubeA outside the padded grid see
+    zero potential, so distant pairs are inaccurate.
+    boundary='free' solves the isolated problem on a grid covering both cubes and
+    agrees with the direct sum at any separation (*pad_factor* is not used).
 
     Returns a dict with J_eV, J_cm1, transition dipoles, and point-dipole
     and extended-dipole comparison values.
     """
-    # Physical separation (origin-to-origin)
-    Rvec_phys = np.asarray(cubeB['origin'], float) - np.asarray(cubeA['origin'], float)
+    # Separation between the monomers (atom centroids, or density centroids)
+    Rvec_phys = monomer_separation(cubeA, cubeB)
 
     # Transition dipoles (computed independently on each cube)
     muA = transition_dipole_from_cube(cubeA)
@@ -161,16 +210,24 @@ def tdc_coupling_fft(
     rhoB = cubeB['rho']
     dxB, dyB, dzB = grid_spacing(cubeB)
 
-    V_padded, V_origin = _fft_coulomb_potential(
-        rhoB, dxB, dyB, dzB, cubeB['origin'], pad_factor=pad_factor,
-    )
-
-    # --- Interpolate V_B at cubeA's grid positions ---
-    VB_at_A = _interpolate_potential(V_padded, V_origin, dxB, dyB, dzB, cubeA)
-
-    # --- TDC Coulomb coupling: J = k_e * Σ ρ_A · V_B ---
     rhoA = cubeA['rho']
-    J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * VB_at_A))
+    if boundary == "free":
+        V, V_origin = _free_space_potential(rhoB, (dxB, dyB, dzB), cubeB['origin'], cubeA)
+        VB_at_A = _interpolate_potential(V, V_origin, dxB, dyB, dzB, cubeA)
+        # --- TDC Coulomb coupling: J = k_e * Σ ρ_A · φ_B · dV_A ---
+        J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * VB_at_A)) * voxel_volume(cubeA)
+    elif boundary == "periodic":
+        V_padded, V_origin = _fft_coulomb_potential(
+            rhoB, dxB, dyB, dzB, cubeB['origin'], pad_factor=pad_factor,
+        )
+        VB_at_A = _interpolate_potential(V_padded, V_origin, dxB, dyB, dzB, cubeA)
+        # --- TDC Coulomb coupling: J = k_e * Σ ρ_A · φ_B · dV_A ---
+        # V_padded carries a factor dV_B (it is built from ρ_B·dV_B), so rescale
+        # by dV_A/dV_B to integrate over cubeA's voxels.
+        dV_ratio = voxel_volume(cubeA) / voxel_volume(cubeB)
+        J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * VB_at_A)) * dV_ratio
+    else:
+        raise ValueError("boundary must be 'periodic' or 'free'")
     J_cm1 = J_eV * EV_TO_CM
 
     dx, dy, dz = grid_spacing(cubeA)

@@ -100,6 +100,34 @@ def _cmd_plot_density(args):
     plot_two_density_slices(cubeA, cubeB, plane=args.plane, index=args.index)
 
 
+def _cmd_run(args):
+    try:
+        from eecc.qm.config import load_config
+        from eecc.qm.pipeline import Pipeline
+    except ImportError as exc:
+        sys.exit(f"eecc run needs the optional QM dependencies: pip install 'eecc[qm]' ({exc})")
+
+    cfg = load_config(args.config)
+    pipe = Pipeline(cfg)
+    if args.restamp:
+        marked = pipe.restamp()
+        print("Marked as up to date: " + (", ".join(marked) if marked else "nothing"))
+        return
+    if args.slurm or args.dry_run:
+        from eecc.qm.slurm import submit
+        out = submit(pipe, args.config, dry_run=args.dry_run)
+        if args.dry_run:
+            print("Job scripts written (not submitted):")
+            print("\n".join(f"  {p}" for p in out))
+        else:
+            print("Submitted jobs: " + ", ".join(out))
+        return
+    from eecc.qm.pyscf_setup import set_threads, set_tmpdir
+    set_threads(cfg.resources.threads)
+    set_tmpdir(cfg.resources.tmpdir)
+    pipe.run(stage=args.stage, fragment=args.fragment, force=args.force)
+
+
 def main() -> None:
     """Entry point for the ``eecc`` command."""
     parser = argparse.ArgumentParser(
@@ -177,6 +205,22 @@ def main() -> None:
     p.add_argument("--plane", choices=["x", "y", "z"], default="z", help="Slice plane")
     p.add_argument("--index", type=int, default=None, help="Slice index")
     p.set_defaults(func=_cmd_plot_density)
+
+    # --- run (automated QM pipeline) ---
+    p = sub.add_parser("run", help="Automated pipeline: geometry -> TD-DFT -> couplings (needs eecc[qm])")
+    p.add_argument("config", help="Pipeline YAML config file")
+    p.add_argument("--stage", default="all",
+                   choices=["all", "opt", "fragments", "td", "transition", "couplings"],
+                   help="Run only this stage")
+    p.add_argument("--fragment", type=int, default=None,
+                   help="1-based fragment index (td/transition stages only)")
+    p.add_argument("--force", action="store_true", help="Rerun stages even if up to date")
+    p.add_argument("--slurm", action="store_true", help="Submit the pipeline as Slurm jobs")
+    p.add_argument("--dry-run", action="store_true", help="Write Slurm scripts without submitting")
+    p.add_argument("--restamp", action="store_true",
+                   help="Mark stages with existing outputs as up to date (after upgrading EECC "
+                        "with unchanged settings)")
+    p.set_defaults(func=_cmd_run)
 
     args = parser.parse_args()
     if not hasattr(args, 'func'):

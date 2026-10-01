@@ -120,6 +120,28 @@ def cube_atom_centroid(cube: Dict[str, Any]) -> np.ndarray:
     return coords.mean(axis=0)
 
 
+def cube_density_centroid(cube: Dict[str, Any]) -> np.ndarray:
+    """Return the |rho|-weighted centroid of the grid points of a cube dict."""
+    w = np.abs(cube['rho'])
+    xs, ys, zs = build_axes_coordinates(cube)
+    tot = w.sum()
+    return np.array([(w.sum(axis=(1, 2)) * xs).sum(), (w.sum(axis=(0, 2)) * ys).sum(),
+                     (w.sum(axis=(0, 1)) * zs).sum()]) / tot
+
+
+def monomer_separation(cubeA: Dict[str, Any], cubeB: Dict[str, Any]) -> np.ndarray:
+    """Vector from monomer A to monomer B (Å).
+
+    Uses the atom centroids when each cube lists its own monomer's atoms, and the
+    |rho|-weighted centroids otherwise (no atoms, or both cubes list the same atoms).
+    """
+    if cubeA['atoms'] and cubeB['atoms']:
+        R = cube_atom_centroid(cubeB) - cube_atom_centroid(cubeA)
+        if np.linalg.norm(R) > 0.1:
+            return R
+    return cube_density_centroid(cubeB) - cube_density_centroid(cubeA)
+
+
 # ============================================================
 # === Diagnostics ============================================
 # ============================================================

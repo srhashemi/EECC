@@ -50,9 +50,11 @@ def read_atoms_scaled(
 def write_charges_txt(
     atoms_with_q: List[Tuple[str, float, float, float, float]],
     out_path: str = "charges_trEsp.txt",
+    verbose: bool = True,
 ) -> None:
     """Write charges in the format: Element  x(Å)  y(Å)  z(Å)  q(e)."""
     with open(out_path, "w") as f:
         for el, x, y, z, q in atoms_with_q:
             f.write(f"{el:>2s} {x:12.6f} {y:12.6f} {z:12.6f} {q:+14.8f}\n")
-    print(f"[IO] Wrote {len(atoms_with_q)} TrESP charges to '{out_path}'")
+    if verbose:
+        print(f"[IO] Wrote {len(atoms_with_q)} TrESP charges to '{out_path}'")

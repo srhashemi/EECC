@@ -48,3 +48,77 @@ def test_fft_coulomb_potential_neutral_density():
     origin = np.array([0.0, 0.0, 0.0])
     V_pad, _ = _fft_coulomb_potential(rho, 0.2, 0.2, 0.2, origin, pad_factor=2)
     assert np.all(np.isfinite(V_pad))
+
+
+def _px_cube(center, step, n, grid_shift=0.0):
+    """Cube dict (Å units) holding a p_x-like transition density centred at *center*.
+
+    *grid_shift* moves the grid box (not the density or the atom) along x.
+    """
+    center = np.asarray(center, float)
+    origin = center - step * (n - 1) / 2.0 + np.array([grid_shift, 0.0, 0.0])
+    axis = np.arange(n) * step
+    X, Y, Z = np.meshgrid(origin[0] + axis, origin[1] + axis, origin[2] + axis, indexing="ij")
+    dx, dy, dz = X - center[0], Y - center[1], Z - center[2]
+    rho = dx * np.exp(-(dx**2 + dy**2 + dz**2))
+    return {
+        "origin": origin,
+        "nv": (n, n, n),
+        "vx": np.array([step, 0.0, 0.0]),
+        "vy": np.array([0.0, step, 0.0]),
+        "vz": np.array([0.0, 0.0, step]),
+        "atoms": [(6, 0.0, *center)],
+        "rho": rho,
+    }
+
+
+def test_tdc_fft_independent_of_grid_spacing():
+    """J must not depend on the voxel size of either cube."""
+    from eecc.coupling.tdc_fft import tdc_coupling_fft
+
+    A = _px_cube([0.0, 0.0, 0.0], 0.25, 41)
+    B_same = _px_cube([8.0, 0.0, 0.0], 0.25, 41)
+    B_fine = _px_cube([8.0, 0.0, 0.0], 0.20, 51)
+
+    J_same = tdc_coupling_fft(A, B_same, pad_factor=2)["J_cm1"]
+    J_fine = tdc_coupling_fft(A, B_fine, pad_factor=2)["J_cm1"]
+    assert abs(J_fine - J_same) / abs(J_same) < 0.01
+
+
+def test_tdc_fft_separation_from_atom_centroids():
+    """The dipole-model separation is between atom centroids, not grid origins."""
+    from eecc.coupling.tdc_fft import tdc_coupling_fft
+
+    A = _px_cube([0.0, 0.0, 0.0], 0.25, 41)
+    B = _px_cube([8.0, 0.0, 0.0], 0.20, 51, grid_shift=1.0)
+    res = tdc_coupling_fft(A, B, pad_factor=2)
+    assert abs(res["R_AB_Ang"] - 8.0) < 1e-9
+
+
+def test_tdc_fft_free_boundary_matches_direct_sum_at_any_distance():
+    """The free-space FFT reproduces the direct sum; the periodic one fails far apart."""
+    from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce
+    from eecc.coupling.tdc_fft import tdc_coupling_fft
+
+    # 7.2 Å boxes that do not overlap, so no grid points of A and B coincide
+    A = _px_cube([0.0, 0.0, 0.0], 0.4, 19)
+    for distance in (8.0, 24.8):  # 24.8 Å: cubeA lies outside B's periodic padded grid
+        B = _px_cube([distance, 0.0, 0.0], 0.4, 19)
+        direct = tdc_coupling_bruteforce(A, B, threshold=0.0)["J_cm1"]
+        free = tdc_coupling_fft(A, B, boundary="free")["J_cm1"]
+        assert abs(free - direct) / abs(direct) < 1e-3
+    periodic = tdc_coupling_fft(A, B, pad_factor=3, boundary="periodic")["J_cm1"]
+    assert abs(periodic) < 0.01 * abs(direct)
+
+
+def test_monomer_separation_falls_back_to_density_centroids():
+    """Cubes that both list all atoms of the dimer still give the right separation."""
+    from eecc.io.cube import monomer_separation
+
+    A = _px_cube([0.0, 0.0, 0.0], 0.25, 41)
+    B = _px_cube([8.0, 0.0, 0.0], 0.25, 41)
+    both = [(6, 0.0, 0.0, 0.0, 0.0), (6, 0.0, 8.0, 0.0, 0.0)]
+    A["atoms"], B["atoms"] = both, list(both)
+    assert abs(monomer_separation(A, B)[0] - 8.0) < 0.05
+    A["atoms"], B["atoms"] = [], []
+    assert abs(monomer_separation(A, B)[0] - 8.0) < 0.05
