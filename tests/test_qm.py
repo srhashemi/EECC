@@ -298,6 +298,25 @@ def test_restamp_and_resubmit_skips_finished_stages(tmp_path):
     assert [os.path.basename(s) for s in scripts] == ["analysis.sh"]
 
 
+def test_opt_convergence_settings(tmp_path):
+    from eecc.qm.ground import convergence_params
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    base = {"geometry": str(geo), "fragments": {"mode": "auto"}}
+    assert convergence_params(config_from_dict(base).opt) == {"convergence_set": "GAU"}
+    cfg = config_from_dict({**base, "opt": {"convergence": "gau_loose", "thresholds": {"energy": 1e-5}}})
+    assert convergence_params(cfg.opt) == {"convergence_set": "GAU_LOOSE", "convergence_energy": 1e-5}
+    # the default leaves existing optimizations up to date; a change invalidates them
+    assert config_from_dict(base).section_hash("opt") == config_from_dict(
+        {**base, "opt": {"convergence": "gau"}}).section_hash("opt")
+    assert cfg.section_hash("opt") != config_from_dict(base).section_hash("opt")
+    with pytest.raises(ValueError, match="opt.convergence"):
+        config_from_dict({**base, "opt": {"convergence": "sloppy"}})
+    with pytest.raises(ValueError, match="opt.thresholds"):
+        config_from_dict({**base, "opt": {"thresholds": {"force": 1e-3}}})
+
+
 def test_cartesian_rule_follows_gaussian():
     from eecc.qm.pyscf_setup import use_cartesian
 

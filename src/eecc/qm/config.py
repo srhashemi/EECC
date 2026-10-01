@@ -48,6 +48,11 @@ class OptConfig:
     density_fit: bool = True
     conv_tol: float = 1e-9
     maxsteps: int = 200
+    # geomeTRIC convergence: a named criteria set (see OPT_CONVERGENCE_SETS) plus
+    # optional overrides of single criteria: energy (Eh), grms/gmax (Eh/Bohr),
+    # drms/dmax (Angstrom). All five criteria must be met.
+    convergence: str = "gau"
+    thresholds: Dict[str, float] = field(default_factory=dict)
     freq: bool = False
     memory_mb: Optional[int] = None  # PySCF memory for this stage; default resources.memory_mb
 
@@ -208,6 +213,9 @@ def _non_default(obj, default) -> Dict[str, Any]:
 
 VALID_FRAGMENT_MODES = ("ranges", "auto", "files")
 VALID_TD_METHODS = ("tddft", "tda")
+OPT_CONVERGENCE_SETS = ("gau", "gau_loose", "gau_tight", "gau_verytight",
+                        "nwchem_loose", "turbomole", "interfrag_tight")
+OPT_THRESHOLDS = ("energy", "grms", "gmax", "drms", "dmax")
 VALID_METHODS = ("tdc_fft", "tdc_direct", "tresp", "mulliken", "point_dipole", "extended_dipole")
 
 
@@ -245,6 +253,13 @@ def validate(cfg: PipelineConfig) -> None:
     n_frag = len(cfg.fragments.ranges if cfg.fragments.mode == "ranges" else cfg.fragments.files)
     if cfg.fragments.charges and cfg.fragments.mode != "auto" and len(cfg.fragments.charges) != n_frag:
         raise ValueError("fragments.charges must list one charge per fragment")
+    if cfg.opt.convergence.lower() not in OPT_CONVERGENCE_SETS:
+        raise ValueError(f"opt.convergence must be one of {OPT_CONVERGENCE_SETS}")
+    bad = set(cfg.opt.thresholds) - set(OPT_THRESHOLDS)
+    if bad:
+        raise ValueError(f"Unknown opt.thresholds key(s) {sorted(bad)}; allowed: {OPT_THRESHOLDS}")
+    if any(float(v) <= 0 for v in cfg.opt.thresholds.values()):
+        raise ValueError("opt.thresholds must be positive")
     if cfg.td.method not in VALID_TD_METHODS:
         raise ValueError(f"td.method must be one of {VALID_TD_METHODS}")
     if not 1 <= cfg.td.state <= cfg.td.nstates:

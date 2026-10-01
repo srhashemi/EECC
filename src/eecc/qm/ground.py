@@ -42,6 +42,14 @@ def _last_frame(path: str) -> Structure | None:
     return Structure(symbols, np.array(coords), block[1])
 
 
+def convergence_params(opt) -> Dict[str, Any]:
+    """geomeTRIC keyword arguments for the convergence settings of *opt*."""
+    params: Dict[str, Any] = {"convergence_set": opt.convergence.upper()}
+    for key, value in opt.thresholds.items():
+        params[f"convergence_{key}"] = float(value)
+    return params
+
+
 def optimize_geometry(structure: Structure, cfg, workdir: str) -> Tuple[Structure, Dict[str, Any]]:
     """Optimize *structure* with the ``opt`` settings of a pipeline config.
 
@@ -70,7 +78,8 @@ def optimize_geometry(structure: Structure, cfg, workdir: str) -> Tuple[Structur
         _append_frame(traj, Structure(structure.symbols, coords), float(envs["energy"]),
                       n_prev + envs["self"].cycle)
 
-    converged, mol_eq = geometric_solver.kernel(mf, maxsteps=opt.maxsteps, callback=callback)
+    converged, mol_eq = geometric_solver.kernel(mf, maxsteps=opt.maxsteps, callback=callback,
+                                                **convergence_params(opt))
     result = Structure(structure.symbols, mol_eq.atom_coords(unit="Angstrom"),
                        f"optimized {opt.xc}-{opt.disp or 'nodisp'}/{opt.basis}")
     save_xyz(result, os.path.join(workdir, "optimized.xyz"))
