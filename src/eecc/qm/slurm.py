@@ -3,6 +3,9 @@
 1. prep: optimization + fragments (one job)
 2. fragments: TDDFT + transition data, one array task per fragment
 3. analysis: couplings, after all array tasks succeeded
+
+Stages that are already complete are skipped, so resubmitting after a failure
+reruns only the missing jobs and array tasks.
 """
 
 from __future__ import annotations
@@ -46,6 +49,18 @@ def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
     return "\n".join(lines) + "\n"
 
 
+def _array_spec(tasks: List[int]) -> str:
+    """Slurm array spec for 1-based *tasks*, e.g. [1, 2, 3, 5] -> '1-3,5'."""
+    parts, start = [], None
+    for i, t in enumerate(tasks):
+        if start is None:
+            start = t
+        if i + 1 == len(tasks) or tasks[i + 1] != t + 1:
+            parts.append(f"{start}-{t}" if t > start else str(t))
+            start = None
+    return ",".join(parts)
+
+
 def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]:
     """Write the three job scripts and submit them with dependencies.
 
@@ -58,6 +73,10 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     os.makedirs(log_dir, exist_ok=True)
     run = f"{shlex.quote(sys.executable)} -m eecc.cli run {shlex.quote(os.path.abspath(config_path))}"
     n = pipe.planned_fragment_count()
+    prep_done = pipe.is_done("opt") and pipe.is_done("fragments")
+    todo = list(range(1, n + 1))
+    if prep_done:
+        todo = [k for k, nm in enumerate(pipe.fragment_names(), 1) if not pipe.is_done("transition", nm)]
 
     optimizing = pipe.cfg.opt.enabled and pipe.cfg.fragments.mode != "files"
     if optimizing:
@@ -71,16 +90,14 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         "frag": _script(pipe, "frag", s.time_td,
                         [f"{run} --stage td --fragment $SLURM_ARRAY_TASK_ID",
                          f"{run} --stage transition --fragment $SLURM_ARRAY_TASK_ID"],
-                        cpus=s.cpus, mem=s.mem, array=f"1-{n}"),
+                        cpus=s.cpus, mem=s.mem, array=_array_spec(todo)),
         "analysis": _script(pipe, "analysis", s.time_analysis, [f"{run} --stage couplings"],
                             cpus=s.analysis_cpus, mem=s.analysis_mem),
     }
     # Skip jobs whose stages are already complete (e.g. when resubmitting).
-    prep_done = pipe.is_done("opt") and pipe.is_done("fragments")
-    frag_done = prep_done and all(pipe.is_done("transition", nm) for nm in pipe.fragment_names())
     if prep_done:
         scripts.pop("prep")
-    if frag_done:
+    if not todo:
         scripts.pop("frag")
     paths = {}
     for key, text in scripts.items():

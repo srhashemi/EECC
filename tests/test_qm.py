@@ -297,6 +297,20 @@ def test_restamp_and_resubmit_skips_finished_stages(tmp_path):
     scripts = submit(pipe, str(tmp_path / "c.yaml"), dry_run=True)
     assert [os.path.basename(s) for s in scripts] == ["analysis.sh"]
 
+    # an unfinished fragment: only its array task is resubmitted
+    open(os.path.join(pipe.stage_dir("transition", "frag2"), ".done"), "w").write("stale\n")
+    scripts = submit(pipe, str(tmp_path / "c.yaml"), dry_run=True)
+    assert [os.path.basename(s) for s in scripts] == ["frag.sh", "analysis.sh"]
+    assert "#SBATCH --array=2\n" in open(scripts[0]).read()
+
+
+def test_slurm_array_spec():
+    from eecc.qm.slurm import _array_spec
+
+    assert _array_spec([1, 2, 3]) == "1-3"
+    assert _array_spec([3]) == "3"
+    assert _array_spec([1, 2, 4, 6, 7]) == "1-2,4,6-7"
+
 
 def test_opt_convergence_settings(tmp_path):
     from eecc.qm.ground import convergence_params
