@@ -39,7 +39,8 @@ def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
     lines.append(f"#SBATCH -o {out}")
     if array:
         lines.append(f"#SBATCH --array={array}")
-    lines += ["", "set -euo pipefail"]
+    # No 'set -u': environment activation scripts (conda, venv) often read unset variables.
+    lines += ["", "set -eo pipefail"]
     lines += s.setup
     lines.append("export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}")
     tmp = pipe.cfg.resources.tmpdir

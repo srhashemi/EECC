@@ -58,9 +58,10 @@ class Pipeline:
     def expected_hash(self, stage: str) -> str:
         cfg = self.cfg
         h = self._input_hash()
-        h = _combine(h, cfg.section_hash("opt", "charge", "spin"))
         if stage == "opt":
-            return h
+            return _combine(h, cfg.section_hash("opt", "charge", "spin"))
+        # Frequencies do not change the geometry, so they do not invalidate later stages.
+        h = _combine(h, cfg.section_hash("opt", "charge", "spin", ignore=("freq",)))
         h = _combine(h, cfg.section_hash("fragments"))
         if stage == "fragments":
             return h
@@ -77,8 +78,26 @@ class Pipeline:
         return os.path.exists(marker) and open(marker).read().strip() == self.expected_hash(stage)
 
     def _mark_done(self, stage: str, fragment: Optional[str] = None) -> None:
+        self._invalidate_downstream(stage, fragment)
         with open(os.path.join(self.stage_dir(stage, fragment), ".done"), "w") as f:
             f.write(self.expected_hash(stage) + "\n")
+
+    def _invalidate_downstream(self, stage: str, fragment: Optional[str] = None) -> None:
+        """Remove the markers of every stage that depends on the results of *stage*.
+
+        A rerun (for example with --force) may produce different results under the
+        same settings, so stages built on the previous results must run again.
+        """
+        for later in STAGES[STAGES.index(stage) + 1:]:
+            if later in ("td", "transition"):
+                d = self.stage_dir(later)
+                names = [fragment] if fragment else (os.listdir(d) if os.path.isdir(d) else [])
+                markers = [os.path.join(d, n, ".done") for n in names]
+            else:
+                markers = [os.path.join(self.stage_dir(later), ".done")]
+            for m in markers:
+                if os.path.exists(m):
+                    os.remove(m)
 
     # --------------------------------------------------------
     # Fragment bookkeeping
@@ -107,19 +126,20 @@ class Pipeline:
     # --------------------------------------------------------
     def run_opt(self, force: bool = False) -> None:
         d = self.stage_dir("opt")
+        if self.is_done("opt") and not force:
+            self.log("[opt] up to date")
+            return
         if self.cfg.fragments.mode == "files":
             self.log("[opt] fragments given as files: nothing to optimize")
             os.makedirs(d, exist_ok=True)
             self._mark_done("opt")
-            return
-        if self.is_done("opt") and not force:
-            self.log("[opt] up to date")
             return
         os.makedirs(d, exist_ok=True)
         structure = read_xyz(self.cfg.path(self.cfg.geometry))
         save_xyz(structure, os.path.join(d, "input.xyz"))
         if self.cfg.opt.enabled:
             from eecc.qm.ground import optimize_geometry
+            self._prepare_trajectory(d, force)
             self.log(f"[opt] optimizing {len(structure)} atoms "
                      f"({self.cfg.opt.xc}-{self.cfg.opt.disp}/{self.cfg.opt.basis})")
             optimize_geometry(structure, self.cfg, d)
@@ -127,6 +147,17 @@ class Pipeline:
             self.log("[opt] disabled: using the input geometry")
             shutil.copyfile(os.path.join(d, "input.xyz"), os.path.join(d, "optimized.xyz"))
         self._mark_done("opt")
+
+    def _prepare_trajectory(self, d: str, force: bool) -> None:
+        """Keep trajectory.xyz for resuming only if it belongs to the current input and settings."""
+        traj, stamp = os.path.join(d, "trajectory.xyz"), os.path.join(d, "trajectory.hash")
+        current = self.expected_hash("opt")
+        stale = force or not os.path.exists(stamp) or open(stamp).read().strip() != current
+        if stale and os.path.exists(traj):
+            self.log("[opt] discarding trajectory.xyz from a different input or settings")
+            os.remove(traj)
+        with open(stamp, "w") as f:
+            f.write(current + "\n")
 
     def run_fragments(self, force: bool = False) -> None:
         d = self.stage_dir("fragments")
@@ -141,7 +172,9 @@ class Pipeline:
             frags: List[Fragment] = load_fragment_files([cfg.path(p) for p in cfg.fragments.files])
         else:
             parent = read_xyz(os.path.join(self.stage_dir("opt"), "optimized.xyz"))
-            frags = build_fragments(parent, cfg.fragments)
+            # Bonds come from the input geometry, so the fragments (and the Slurm
+            # array size) do not depend on how far the optimization moved atoms.
+            frags = build_fragments(parent, cfg.fragments, topology=read_xyz(cfg.path(cfg.geometry)))
         meta = []
         for k, fr in enumerate(frags):
             save_xyz(fr.structure, os.path.join(d, f"{fr.name}.xyz"))

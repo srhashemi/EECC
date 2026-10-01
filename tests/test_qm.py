@@ -338,3 +338,111 @@ def test_cartesian_rule_follows_gaussian():
     assert not use_cartesian("6-311g(d,p)", None)
     assert not use_cartesian("def2-svp", None) and not use_cartesian("sto-3g", None)
     assert use_cartesian("def2-svp", True)
+
+
+def test_changed_defaults_invalidate_old_results():
+    """Stages computed under an old default must not count as current."""
+    import hashlib
+
+    def stored_before_change(section, values):  # hash written by the code before the change
+        payload = json.dumps({section: values}, sort_keys=True).encode()
+        return hashlib.sha256(payload).hexdigest()[:16]
+
+    base = {"geometry": "x.xyz", "fragments": {"mode": "auto"}}
+    # couplings computed with the old defaults (cap charges kept, periodic FFT)
+    assert config_from_dict(base).section_hash("couplings") != stored_before_change("couplings", {})
+    explicit_old = {**base, "couplings": {"cap_charges": "keep", "tdc_boundary": "periodic"}}
+    assert config_from_dict(explicit_old).section_hash("couplings") == stored_before_change("couplings", {})
+    # 6-311G used Cartesian d functions under the original rule, spherical ones now
+    tz = config_from_dict({**base, "td": {"basis": "6-311g(d,p)"}})
+    assert tz.section_hash("td") != stored_before_change("td", {"basis": "6-311g(d,p)"})
+    pople = config_from_dict({**base, "td": {"basis": "6-31g(d)"}})
+    assert pople.section_hash("td") == stored_before_change("td", {})
+
+
+def test_frequencies_and_maxsteps_do_not_invalidate_later_stages(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    base = _small_config(tmp_path, geo, opt={"enabled": True})
+    other = _small_config(tmp_path, geo, opt={"enabled": True, "freq": True, "maxsteps": 7})
+    p, q = Pipeline(base), Pipeline(other)
+    assert p.expected_hash("td") == q.expected_hash("td")
+    assert p.expected_hash("opt") != q.expected_hash("opt")  # the opt stage itself reruns for frequencies
+
+
+def test_rerun_invalidates_dependent_stages(tmp_path):
+    from eecc.qm.pipeline import STAGES, Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    pipe = Pipeline(_small_config(tmp_path, geo), log=lambda *a: None)
+    for st in STAGES:
+        for frag in (["frag1", "frag2"] if st in ("td", "transition") else [None]):
+            os.makedirs(pipe.stage_dir(st, frag), exist_ok=True)
+            open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w").write(pipe.expected_hash(st) + "\n")
+    pipe._mark_done("td", "frag1")  # e.g. after --stage td --fragment 1 --force
+    assert pipe.is_done("td", "frag1") and pipe.is_done("td", "frag2")
+    assert not pipe.is_done("transition", "frag1") and pipe.is_done("transition", "frag2")
+    assert not pipe.is_done("couplings")
+    pipe._mark_done("fragments")
+    assert not any(pipe.is_done(st, f) for st in ("td", "transition") for f in ("frag1", "frag2"))
+
+
+def test_optimization_restarts_only_from_matching_trajectory(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    pipe = Pipeline(_small_config(tmp_path, geo, opt={"enabled": True}), log=lambda *a: None)
+    d = pipe.stage_dir("opt")
+    os.makedirs(d)
+    traj = os.path.join(d, "trajectory.xyz")
+    open(traj, "w").write("frames of another run\n")
+    pipe._prepare_trajectory(d, force=False)  # no stamp: unknown origin
+    assert not os.path.exists(traj)
+    open(traj, "w").write("frames of this run\n")
+    pipe._prepare_trajectory(d, force=False)  # stamp matches: resume
+    assert os.path.exists(traj)
+    save_xyz(_stacked_dimer(4.5), str(geo))  # new input geometry
+    pipe._prepare_trajectory(d, force=False)
+    assert not os.path.exists(traj)
+    open(traj, "w").write("frames\n")
+    pipe._prepare_trajectory(d, force=True)
+    assert not os.path.exists(traj)
+
+
+def test_unconverged_optimization_leaves_no_optimized_geometry(tmp_path):
+    from eecc.qm.ground import optimize_geometry
+
+    cfg = _small_config(tmp_path, tmp_path / "x.xyz",
+                        opt={"enabled": True, "basis": "sto-3g", "grid": [50, 194],
+                             "density_fit": False, "maxsteps": 1, "disp": None})
+    distorted = Structure(BUTADIENE.symbols, BUTADIENE.coords * 1.1)
+    with pytest.raises(RuntimeError, match="did not converge"):
+        optimize_geometry(distorted, cfg, str(tmp_path / "opt"))
+    assert not os.path.exists(tmp_path / "opt" / "optimized.xyz")
+
+
+def test_auto_fragments_use_input_connectivity():
+    """Molecules pushed within bonding distance by an optimization stay separate."""
+    from eecc.qm.config import FragmentsConfig
+
+    far, close = _stacked_dimer(4.0), _stacked_dimer(1.2)
+    cfg = FragmentsConfig(mode="auto")
+    assert len(build_fragments(close, cfg, topology=far)) == 2
+    with pytest.raises(ValueError, match="single connected"):
+        build_fragments(close, cfg)
+
+
+def test_slurm_scripts_tolerate_unset_variables_in_setup(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.slurm import submit
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, slurm={"account": "p", "setup": ["conda activate eecc"]})
+    for path in submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True):
+        text = open(path).read()
+        assert "set -eo pipefail" in text and "set -u" not in text and "-euo" not in text

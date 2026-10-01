@@ -177,7 +177,12 @@ eecc run config.yaml --dry-run            # write the Slurm scripts only
 Results go to `<workdir>/05_couplings/couplings.txt` (and `.json`). Each stage
 records a hash of the settings it depends on, so a rerun skips finished stages
 and resumes an interrupted optimization. Changing, for example, the TD settings
-reruns only the TD stage and the stages after it.
+reruns only the TD stage and the stages after it, and rerunning a stage with
+`--force` also reruns the stages that use its results. Only settings that differ
+from their defaults are hashed, so upgrading EECC keeps finished stages; when a
+default that affects results changes, stages computed under the old default are
+rerun. After an upgrade that should not change results, `eecc run config.yaml
+--restamp` marks existing results as current.
 
 A fully commented configuration for the BODIPY dimer is in
 [`examples/qm/bodipy_dimer/config.yaml`](examples/qm/bodipy_dimer/config.yaml).
@@ -207,6 +212,11 @@ Notes:
   BODIPY dimer (128 atoms), `opt.grid: [75, 302]` makes each step about 35% faster
   but changes the gradient by up to 2×10⁻⁴ Eh/Bohr, enough to shift the minimum
   along soft modes. Use it only for rigid molecules.
+- TDC (FFT) solves the isolated Coulomb problem on a grid that covers both
+  fragments (`couplings.tdc_boundary: free`) and agrees with the direct sum at any
+  separation. `tdc_boundary: periodic` reproduces the published workflow, whose
+  periodic images make distant pairs inaccurate (BODIPY tetramer, 24.7 Å apart:
+  −14 cm⁻¹ instead of −29 cm⁻¹).
 - Only closed-shell systems are supported. Signs of the couplings are arbitrary
   because the phase of each fragment's transition density is arbitrary.
 
@@ -233,8 +243,9 @@ published couplings (cm⁻¹; published / `eecc run`, with the arbitrary signs o
 ¹ The published trimer used 6-311G(d,p); `eecc run` used the default 6-31G(d).
 
 TDC agrees within 2 %, TrESP within 3.5 % and TrMulliken within 2.5 %. Compare
-against the published *direct* TDC values: the published FFT values depend on
-the cube grid (dimer: 990 FFT vs 967 direct).
+against the published *direct* TDC values: the published FFT values used periodic
+boundaries and depend on the cube grid (dimer: 990 FFT vs 967 direct; tetramer
+pair 1–4: 12 FFT vs 30 direct).
 
 Two further checks on the dimer:
 

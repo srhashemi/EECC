@@ -93,3 +93,32 @@ def test_tdc_fft_separation_from_atom_centroids():
     B = _px_cube([8.0, 0.0, 0.0], 0.20, 51, grid_shift=1.0)
     res = tdc_coupling_fft(A, B, pad_factor=2)
     assert abs(res["R_AB_Ang"] - 8.0) < 1e-9
+
+
+def test_tdc_fft_free_boundary_matches_direct_sum_at_any_distance():
+    """The free-space FFT reproduces the direct sum; the periodic one fails far apart."""
+    from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce
+    from eecc.coupling.tdc_fft import tdc_coupling_fft
+
+    # 7.2 Å boxes that do not overlap, so no grid points of A and B coincide
+    A = _px_cube([0.0, 0.0, 0.0], 0.4, 19)
+    for distance in (8.0, 24.8):  # 24.8 Å: cubeA lies outside B's periodic padded grid
+        B = _px_cube([distance, 0.0, 0.0], 0.4, 19)
+        direct = tdc_coupling_bruteforce(A, B, threshold=0.0)["J_cm1"]
+        free = tdc_coupling_fft(A, B, boundary="free")["J_cm1"]
+        assert abs(free - direct) / abs(direct) < 1e-3
+    periodic = tdc_coupling_fft(A, B, pad_factor=3, boundary="periodic")["J_cm1"]
+    assert abs(periodic) < 0.01 * abs(direct)
+
+
+def test_monomer_separation_falls_back_to_density_centroids():
+    """Cubes that both list all atoms of the dimer still give the right separation."""
+    from eecc.io.cube import monomer_separation
+
+    A = _px_cube([0.0, 0.0, 0.0], 0.25, 41)
+    B = _px_cube([8.0, 0.0, 0.0], 0.25, 41)
+    both = [(6, 0.0, 0.0, 0.0, 0.0), (6, 0.0, 8.0, 0.0, 0.0)]
+    A["atoms"], B["atoms"] = both, list(both)
+    assert abs(monomer_separation(A, B)[0] - 8.0) < 0.05
+    A["atoms"], B["atoms"] = [], []
+    assert abs(monomer_separation(A, B)[0] - 8.0) < 0.05

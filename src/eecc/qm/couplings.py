@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import json
 import os
 from dataclasses import dataclass
@@ -10,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from eecc.constants import EV_TO_CM
+from eecc.constants import A0_TO_ANG, DEBYE_PER_EANG, EV_TO_CM
 from eecc.coupling.coulomb import compute_J
 from eecc.coupling.dipole import (
     extended_dipole_coupling_formula,
@@ -19,7 +18,7 @@ from eecc.coupling.dipole import (
 )
 from eecc.io.charges import read_atoms
 
-BOHR_TO_ANG = 0.52917721092
+BOHR_TO_ANG = A0_TO_ANG
 
 METHOD_LABELS = {
     "tdc_fft": "TDC (FFT)",
@@ -102,7 +101,11 @@ def pair_couplings(A: FragmentData, B: FragmentData, methods: List[str], ccfg,
         cA, cB = cache[A.name], cache[B.name]
         if "tdc_fft" in methods:
             from eecc.coupling.tdc_fft import tdc_coupling_fft
-            out["tdc_fft"] = tdc_coupling_fft(cA, cB, dielectric=eps, pad_factor=ccfg.tdc_pad)["J_cm1"]
+            try:
+                out["tdc_fft"] = tdc_coupling_fft(cA, cB, dielectric=eps, pad_factor=ccfg.tdc_pad,
+                                                  boundary=ccfg.tdc_boundary)["J_cm1"]
+            except ValueError:  # grid too large for a free-space FFT: rely on the direct sum
+                out["tdc_fft"] = float("nan")
         if "tdc_direct" in methods:
             from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce
             out["tdc_direct"] = tdc_coupling_bruteforce(
@@ -128,17 +131,19 @@ def run_couplings(fragments: List[FragmentData], ccfg, out_dir: str) -> Dict[str
     methods = [m for m in METHOD_LABELS if m in ccfg.methods]
     cache: Dict[str, Any] = {}
     pairs = []
-    for A, B in itertools.combinations(fragments, 2):
-        J = pair_couplings(A, B, methods, ccfg, cache)
-        pairs.append({"pair": [A.name, B.name],
-                      "R_Ang": float(np.linalg.norm(B.centroid - A.centroid)),
-                      "J_cm-1": J})
+    for i, A in enumerate(fragments):
+        for B in fragments[i + 1:]:
+            J = pair_couplings(A, B, methods, ccfg, cache)
+            pairs.append({"pair": [A.name, B.name],
+                          "R_Ang": float(np.linalg.norm(B.centroid - A.centroid)),
+                          "J_cm-1": J})
+        cache.pop(A.name, None)  # A appears in no later pair
 
     result = {
         "dielectric": ccfg.dielectric,
         "cap_charges": ccfg.cap_charges,
         "fragments": [{"name": f.name, "energy_eV": f.energy_eV, "f": f.f,
-                       "mu_D": float(np.linalg.norm(f.mu_eAng) * 4.80320427),
+                       "mu_D": float(np.linalg.norm(f.mu_eAng) * DEBYE_PER_EANG),
                        "mu_eAng": f.mu_eAng.tolist()} for f in fragments],
         "pairs": pairs,
         "note": "Signs are arbitrary: the phase of each fragment's transition density is arbitrary.",
@@ -165,5 +170,7 @@ def format_report(result: Dict[str, Any], methods: List[str]) -> str:
         row += "".join(f" {p['J_cm-1'][m]:19.2f}" for m in methods)
         lines.append(row)
     lines.append("#")
+    if any(np.isnan(p["J_cm-1"].get("tdc_fft", 0.0)) for p in result["pairs"]):
+        lines.append("# nan: free-space FFT grid too large for this pair; use TDC (direct)")
     lines.append(f"# J in cm^-1 (1 eV = {EV_TO_CM} cm^-1)")
     return "\n".join(lines) + "\n"

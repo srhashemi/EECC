@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 
 # ============================================================
@@ -101,7 +101,10 @@ class CouplingsConfig:
     # charge-based couplings. 'merge' adds each cap's charge to the atom it caps,
     # 'drop' removes it, 'keep' uses the charges as fitted.
     cap_charges: str = "merge"
-    tdc_pad: int = 3
+    tdc_pad: int = 3  # periodic boundary only
+    # TDC (FFT) boundary: 'free' (isolated, matches the direct sum at any distance)
+    # or 'periodic' (as in the published workflow; inaccurate for distant pairs).
+    tdc_boundary: str = "free"
     tdc_direct_threshold: float = 0.0005
 
 
@@ -170,32 +173,58 @@ class PipelineConfig:
         d.pop("base_dir", None)
         return d
 
-    def section_hash(self, *names: str) -> str:
+    def section_hash(self, *names: str, ignore: Sequence[str] = ()) -> str:
         """Stable hash of the named sections (used to decide whether a stage is stale).
 
         Only settings that differ from their defaults enter the hash, and settings
-        that do not affect results (see ``HASH_IGNORED``) are skipped. Adding a new
-        option with a default value therefore leaves existing stages up to date,
-        while changing any setting that matters invalidates them.
+        that do not affect results (see ``HASH_IGNORED``, plus *ignore*) are skipped.
+        Adding a new option with a default value therefore leaves existing stages up
+        to date, while changing any setting that matters invalidates them. Defaults
+        that changed are compared against their old value (``CHANGED_DEFAULTS``), so
+        stages computed under the old default are rerun.
         """
         payload = {}
         for n in names:
             value = getattr(self, n)
             if dataclasses.is_dataclass(value):
-                value = _non_default(value, type(value)())
+                baseline = type(value)()
+                for key, old in CHANGED_DEFAULTS.get(n, {}).items():
+                    setattr(baseline, key, old)
+                value = _non_default(value, baseline, set(ignore))
+                if n in ("opt", "td") and _cart_rule_changed(value, getattr(self, n)):
+                    value["cart_rule"] = "spherical-6-311g"
             payload[n] = value
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
 # Settings that never change results and are left out of stage hashes.
-HASH_IGNORED = {"memory_mb"}
+# maxsteps only caps the iterations of a converged optimization.
+HASH_IGNORED = {"memory_mb", "maxsteps"}
+
+# Defaults changed after results could have been computed with the old value:
+# {section: {field: old default}}.
+CHANGED_DEFAULTS: Dict[str, Dict[str, Any]] = {
+    "couplings": {"cap_charges": "keep", "tdc_boundary": "periodic"},
+}
 
 
-def _non_default(obj, default) -> Dict[str, Any]:
+def _cart_rule_changed(hashed: Dict[str, Any], section) -> bool:
+    """True if the default Cartesian/spherical choice differs from the original rule.
+
+    The 6-311G family switched from Cartesian to spherical d functions by default.
+    """
+    from eecc.qm.pyscf_setup import _POPLE, use_cartesian
+
+    if section.cart is not None:
+        return False
+    return use_cartesian(section.basis, None) != bool(_POPLE.match(section.basis.strip().lower()))
+
+
+def _non_default(obj, default, ignore: Optional[set] = None) -> Dict[str, Any]:
     """Nested dict of the fields of dataclass *obj* that differ from *default*."""
     out: Dict[str, Any] = {}
     for f in dataclasses.fields(obj):
-        if f.name in HASH_IGNORED:
+        if f.name in HASH_IGNORED or (ignore and f.name in ignore):
             continue
         v, d = getattr(obj, f.name), getattr(default, f.name)
         if dataclasses.is_dataclass(v):
@@ -269,6 +298,8 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError(f"Unknown coupling method(s) {sorted(bad)}; allowed: {VALID_METHODS}")
     if cfg.couplings.cap_charges not in ("merge", "drop", "keep"):
         raise ValueError("couplings.cap_charges must be 'merge', 'drop' or 'keep'")
+    if cfg.couplings.tdc_boundary not in ("free", "periodic"):
+        raise ValueError("couplings.tdc_boundary must be 'free' or 'periodic'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
         raise ValueError("transition.cube spacing and margin must be positive")
 

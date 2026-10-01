@@ -154,12 +154,19 @@ def make_fragment(
     return Fragment(name, Structure(symbols, np.array(coords), comment), idx, caps)
 
 
-def build_fragments(parent: Optional[Structure], cfg) -> List[Fragment]:
-    """Build fragments according to a :class:`~eecc.qm.config.FragmentsConfig`."""
+def build_fragments(parent: Optional[Structure], cfg,
+                    topology: Optional[Structure] = None) -> List[Fragment]:
+    """Build fragments according to a :class:`~eecc.qm.config.FragmentsConfig`.
+
+    Bonds are detected on *topology* (same atoms as *parent*, e.g. the geometry
+    before optimization) when given, otherwise on *parent*.
+    """
     if cfg.mode == "files":
         raise ValueError("mode 'files' is handled by load_fragment_files()")
     assert parent is not None
-    bl = bonds(parent, cfg.bond_scale)
+    if topology is not None and topology.symbols != parent.symbols:
+        raise ValueError("topology structure does not match the parent atoms")
+    bl = bonds(topology if topology is not None else parent, cfg.bond_scale)
     if cfg.mode == "auto":
         groups = connected_components(len(parent), bl)
         if len(groups) < 2:

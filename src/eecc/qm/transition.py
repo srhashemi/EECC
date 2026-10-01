@@ -15,11 +15,13 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
+from eecc.constants import A0_TO_ANG
+from eecc.io.charges import write_charges_txt
 from eecc.qm.excited import AU_TO_DEBYE, dipole_from_density_matrix, load_excited_states
 from eecc.qm.pyscf_setup import build_mol
 from eecc.qm.structure import Structure
 
-BOHR_TO_ANG = 0.52917721092
+BOHR_TO_ANG = A0_TO_ANG
 
 # van der Waals radii (Å), Bondi 1964 (B, Si from Mantina et al. 2009).
 VDW_RADII = {
@@ -149,9 +151,8 @@ def tresp_charges(mol, T: np.ndarray, symbols: Sequence[str], cfg_tresp,
 def write_charge_file(path: str, symbols: Sequence[str], coords_ang: np.ndarray,
                       q: np.ndarray) -> None:
     """Write charges in EECC format: ``Element x(Å) y(Å) z(Å) q(e)``."""
-    with open(path, "w") as f:
-        for el, (x, y, z), qi in zip(symbols, coords_ang, q):
-            f.write(f"{el:>2s} {x:12.6f} {y:12.6f} {z:12.6f} {qi:+14.8f}\n")
+    write_charges_txt([(el, *xyz, qi) for el, xyz, qi in zip(symbols, coords_ang, q)],
+                      path, verbose=False)
 
 
 def run_transition(td_dir: str, cfg, out_dir: str, name: str, charge: int = 0) -> Dict[str, Any]:

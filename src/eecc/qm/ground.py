@@ -80,13 +80,14 @@ def optimize_geometry(structure: Structure, cfg, workdir: str) -> Tuple[Structur
 
     converged, mol_eq = geometric_solver.kernel(mf, maxsteps=opt.maxsteps, callback=callback,
                                                 **convergence_params(opt))
-    result = Structure(structure.symbols, mol_eq.atom_coords(unit="Angstrom"),
-                       f"optimized {opt.xc}-{opt.disp or 'nodisp'}/{opt.basis}")
-    save_xyz(result, os.path.join(workdir, "optimized.xyz"))
-    info: Dict[str, Any] = {"converged": bool(converged)}
     if not converged:
         raise RuntimeError(f"geometry optimization did not converge in {opt.maxsteps} steps; "
                            "rerun to continue from the last geometry")
+    # Written only after convergence: its presence marks a finished optimization.
+    result = Structure(structure.symbols, mol_eq.atom_coords(unit="Angstrom"),
+                       f"optimized {opt.xc}-{opt.disp or 'nodisp'}/{opt.basis}")
+    save_xyz(result, os.path.join(workdir, "optimized.xyz"))
+    info: Dict[str, Any] = {"converged": True}
 
     if opt.freq:
         info.update(harmonic_frequencies(result, cfg, workdir))
