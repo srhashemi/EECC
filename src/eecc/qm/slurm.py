@@ -75,6 +75,13 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         "analysis": _script(pipe, "analysis", s.time_analysis, [f"{run} --stage couplings"],
                             cpus=s.analysis_cpus, mem=s.analysis_mem),
     }
+    # Skip jobs whose stages are already complete (e.g. when resubmitting).
+    prep_done = pipe.is_done("opt") and pipe.is_done("fragments")
+    frag_done = prep_done and all(pipe.is_done("transition", nm) for nm in pipe.fragment_names())
+    if prep_done:
+        scripts.pop("prep")
+    if frag_done:
+        scripts.pop("frag")
     paths = {}
     for key, text in scripts.items():
         paths[key] = os.path.join(log_dir, f"{key}.sh")
@@ -90,7 +97,9 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         cmd.append(path)
         return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip().split(";")[0]
 
-    j1 = sbatch(paths["prep"])
-    j2 = sbatch(paths["frag"], j1)
-    j3 = sbatch(paths["analysis"], j2)
-    return [j1, j2, j3]
+    jobs, dep = [], None
+    for key in ("prep", "frag", "analysis"):
+        if key in paths:
+            dep = sbatch(paths[key], dep)
+            jobs.append(f"{key} {dep}")
+    return jobs

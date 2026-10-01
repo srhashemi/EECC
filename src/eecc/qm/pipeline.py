@@ -224,6 +224,45 @@ class Pipeline:
         self._mark_done("couplings")
 
     # --------------------------------------------------------
+    # Marking existing results as current
+    # --------------------------------------------------------
+    def _outputs_present(self, stage: str, fragment: Optional[str] = None) -> bool:
+        d = self.stage_dir(stage, fragment)
+        files = {
+            "opt": ["optimized.xyz"] if self.cfg.fragments.mode != "files" else [],
+            "fragments": ["fragments.json"],
+            "td": ["td.npz", "td.json"],
+            "transition": [f"{fragment}.cub", f"{fragment}_tresp.txt",
+                           f"{fragment}_mulliken.txt", f"{fragment}_transition.json"],
+            "couplings": ["couplings.json", "couplings.txt"],
+        }[stage]
+        return os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
+
+    def restamp(self) -> List[str]:
+        """Mark stages whose outputs exist as up to date, in pipeline order.
+
+        Use this only when the results are known to match the current settings,
+        e.g. after upgrading EECC with an unchanged configuration. Stops at the
+        first stage whose outputs are missing.
+        """
+        marked = []
+        for st in STAGES:
+            if st in ("td", "transition"):
+                if not os.path.exists(os.path.join(self.stage_dir("fragments"), "fragments.json")):
+                    break
+                names = self.fragment_names()
+                if not all(self._outputs_present(st, n) for n in names):
+                    break
+                for n in names:
+                    self._mark_done(st, n)
+            else:
+                if not self._outputs_present(st):
+                    break
+                os.makedirs(self.stage_dir(st), exist_ok=True)
+                self._mark_done(st)
+            marked.append(st)
+        return marked
+
     def run(self, stage: str = "all", fragment: Optional[int] = None, force: bool = False) -> None:
         """Run one stage (optionally for one 1-based fragment index) or everything."""
         os.makedirs(self.root, exist_ok=True)

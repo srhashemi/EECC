@@ -109,6 +109,10 @@ def _cmd_run(args):
 
     cfg = load_config(args.config)
     pipe = Pipeline(cfg)
+    if args.restamp:
+        marked = pipe.restamp()
+        print("Marked as up to date: " + (", ".join(marked) if marked else "nothing"))
+        return
     if args.slurm or args.dry_run:
         from eecc.qm.slurm import submit
         out = submit(pipe, args.config, dry_run=args.dry_run)
@@ -116,7 +120,7 @@ def _cmd_run(args):
             print("Job scripts written (not submitted):")
             print("\n".join(f"  {p}" for p in out))
         else:
-            print(f"Submitted jobs: prep {out[0]}, fragments {out[1]} (array), analysis {out[2]}")
+            print("Submitted jobs: " + ", ".join(out))
         return
     from eecc.qm.pyscf_setup import set_threads, set_tmpdir
     set_threads(cfg.resources.threads)
@@ -213,6 +217,9 @@ def main() -> None:
     p.add_argument("--force", action="store_true", help="Rerun stages even if up to date")
     p.add_argument("--slurm", action="store_true", help="Submit the pipeline as Slurm jobs")
     p.add_argument("--dry-run", action="store_true", help="Write Slurm scripts without submitting")
+    p.add_argument("--restamp", action="store_true",
+                   help="Mark stages with existing outputs as up to date (after upgrading EECC "
+                        "with unchanged settings)")
     p.set_defaults(func=_cmd_run)
 
     args = parser.parse_args()

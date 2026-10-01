@@ -166,10 +166,40 @@ class PipelineConfig:
         return d
 
     def section_hash(self, *names: str) -> str:
-        """Stable hash of the named sections (used to decide whether a stage is stale)."""
-        d = self.to_dict()
-        payload = json.dumps({n: d[n] for n in names}, sort_keys=True)
-        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+        """Stable hash of the named sections (used to decide whether a stage is stale).
+
+        Only settings that differ from their defaults enter the hash, and settings
+        that do not affect results (see ``HASH_IGNORED``) are skipped. Adding a new
+        option with a default value therefore leaves existing stages up to date,
+        while changing any setting that matters invalidates them.
+        """
+        payload = {}
+        for n in names:
+            value = getattr(self, n)
+            if dataclasses.is_dataclass(value):
+                value = _non_default(value, type(value)())
+            payload[n] = value
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
+# Settings that never change results and are left out of stage hashes.
+HASH_IGNORED = {"memory_mb"}
+
+
+def _non_default(obj, default) -> Dict[str, Any]:
+    """Nested dict of the fields of dataclass *obj* that differ from *default*."""
+    out: Dict[str, Any] = {}
+    for f in dataclasses.fields(obj):
+        if f.name in HASH_IGNORED:
+            continue
+        v, d = getattr(obj, f.name), getattr(default, f.name)
+        if dataclasses.is_dataclass(v):
+            sub = _non_default(v, d)
+            if sub:
+                out[f.name] = sub
+        elif v != d:
+            out[f.name] = v
+    return out
 
 
 # ============================================================

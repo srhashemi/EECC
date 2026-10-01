@@ -265,3 +265,34 @@ def test_pipeline_fragment_caps_mapping(tmp_path):
     assert pipe.fragment_caps("frag1") == [(5, 1)]
     # fragment 2 = parent atoms 3,4,8,9,10 (+cap on atom 3); atom 3 is index 0
     assert pipe.fragment_caps("frag2") == [(5, 0)]
+
+
+def test_stage_hash_ignores_defaults_and_resources():
+    base = {"geometry": "x.xyz", "fragments": {"mode": "auto"}}
+    h = config_from_dict(base).section_hash("opt", "td")
+    # spelling out a default value, or changing memory, keeps the hash
+    same = config_from_dict({**base, "td": {"nstates": 10}, "opt": {"memory_mb": 9000}})
+    assert same.section_hash("opt", "td") == h
+    # a real change invalidates it
+    assert config_from_dict({**base, "td": {"nstates": 6}}).section_hash("opt", "td") != h
+
+
+def test_restamp_and_resubmit_skips_finished_stages(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.slurm import submit
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, couplings={"methods": ["tresp"]}, slurm={"account": "p"})
+    pipe = Pipeline(cfg, log=lambda *a: None)
+    pipe.run()
+    # simulate markers written by an older version
+    for root, _, files in os.walk(pipe.root):
+        if ".done" in files:
+            open(os.path.join(root, ".done"), "w").write("stale\n")
+    assert not pipe.is_done("opt")
+    assert pipe.restamp() == ["opt", "fragments", "td", "transition", "couplings"]
+    assert pipe.is_done("couplings") and pipe.is_done("td", "frag2")
+
+    scripts = submit(pipe, str(tmp_path / "c.yaml"), dry_run=True)
+    assert [os.path.basename(s) for s in scripts] == ["analysis.sh"]
