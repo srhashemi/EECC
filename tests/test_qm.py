@@ -237,3 +237,31 @@ def test_slurm_opt_job_overrides(tmp_path):
                                                     dry_run=True))
     assert "#SBATCH -p main" in prep and "#SBATCH -c 128" in prep and "#SBATCH --mem=0" in prep
     assert "#SBATCH -p shared" in frag and "#SBATCH -c 32" in frag
+
+
+def test_cap_charge_treatment():
+    from eecc.qm.couplings import treat_cap_charges
+
+    atoms = [("C", 0, 0, 0, 0.10), ("C", 1.4, 0, 0, -0.08), ("H", 2.5, 0, 0, -0.02)]
+    caps = [(2, 1)]
+    merged = treat_cap_charges(atoms, caps, "merge")
+    assert len(merged) == 2 and abs(merged[1][4] - (-0.10)) < 1e-12
+    assert abs(sum(a[4] for a in merged)) < 1e-12
+    assert len(treat_cap_charges(atoms, caps, "drop")) == 2
+    assert treat_cap_charges(atoms, caps, "keep") == atoms
+
+
+def test_pipeline_fragment_caps_mapping(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "butadiene.xyz"
+    save_xyz(BUTADIENE, str(geo))
+    cfg = _small_config(tmp_path, geo, fragments={"mode": "ranges",
+                                                  "ranges": ["1-2,5-7", "3-4,8-10"]})
+    pipe = Pipeline(cfg, log=lambda *a: None)
+    pipe.run(stage="opt")
+    pipe.run(stage="fragments")
+    # fragment 1 = parent atoms 1,2,5,6,7 (+cap on atom 2 at index 5); atom 2 is index 1
+    assert pipe.fragment_caps("frag1") == [(5, 1)]
+    # fragment 2 = parent atoms 3,4,8,9,10 (+cap on atom 3); atom 3 is index 0
+    assert pipe.fragment_caps("frag2") == [(5, 0)]

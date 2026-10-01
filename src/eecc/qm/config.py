@@ -92,6 +92,10 @@ class CouplingsConfig:
         "tdc_fft", "tresp", "mulliken", "point_dipole", "extended_dipole",
     ])
     dielectric: float = 1.0
+    # Charges on link-atom caps sit close to the neighbouring fragment and distort
+    # charge-based couplings. 'merge' adds each cap's charge to the atom it caps,
+    # 'drop' removes it, 'keep' uses the charges as fitted.
+    cap_charges: str = "merge"
     tdc_pad: int = 3
     tdc_direct_threshold: float = 0.0005
 
@@ -218,6 +222,8 @@ def validate(cfg: PipelineConfig) -> None:
     bad = set(cfg.couplings.methods) - set(VALID_METHODS)
     if bad:
         raise ValueError(f"Unknown coupling method(s) {sorted(bad)}; allowed: {VALID_METHODS}")
+    if cfg.couplings.cap_charges not in ("merge", "drop", "keep"):
+        raise ValueError("couplings.cap_charges must be 'merge', 'drop' or 'keep'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
         raise ValueError("transition.cube spacing and margin must be positive")
 

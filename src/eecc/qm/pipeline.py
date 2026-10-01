@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from eecc.qm.config import PipelineConfig
 from eecc.qm.structure import (
@@ -154,6 +154,17 @@ class Pipeline:
             json.dump({"fragments": meta}, f, indent=2)
         self._mark_done("fragments")
 
+    def fragment_caps(self, name: str) -> List[Tuple[int, int]]:
+        """(cap index, capped-atom index) pairs, 0-based within the fragment structure.
+
+        Caps are appended after the fragment's own atoms in the order recorded.
+        """
+        with open(os.path.join(self.stage_dir("fragments"), "fragments.json")) as f:
+            fr = next(x for x in json.load(f)["fragments"] if x["name"] == name)
+        own = fr["parent_atoms_1based"]
+        pos = {p: i for i, p in enumerate(own)}
+        return [(len(own) + c, pos[cap["kept"]]) for c, cap in enumerate(fr["caps"])]
+
     def _fragment_charge(self, name: str) -> int:
         with open(os.path.join(self.stage_dir("fragments"), "fragments.json")) as f:
             for fr in json.load(f)["fragments"]:
@@ -203,7 +214,8 @@ class Pipeline:
         if missing:
             raise RuntimeError(f"transition stage not finished for {missing}")
         from eecc.qm.couplings import load_fragment, run_couplings, format_report, METHOD_LABELS
-        frags = [load_fragment(self.stage_dir("transition", n), self.stage_dir("td", n), n)
+        frags = [load_fragment(self.stage_dir("transition", n), self.stage_dir("td", n), n,
+                               self.fragment_caps(n), self.cfg.couplings.cap_charges)
                  for n in names]
         d = self.stage_dir("couplings")
         result = run_couplings(frags, self.cfg.couplings, d)

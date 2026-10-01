@@ -6,7 +6,7 @@ import itertools
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -46,14 +46,39 @@ class FragmentData:
         return np.array([a[1:4] for a in self.tresp], float).mean(axis=0)
 
 
-def load_fragment(transition_dir: str, td_dir: str, name: str) -> FragmentData:
+def treat_cap_charges(atoms: list, caps: List[Tuple[int, int]], mode: str) -> list:
+    """Apply the cap-charge treatment to a fragment's charge list.
+
+    *caps* holds (cap index, capped-atom index) pairs, 0-based within the fragment.
+    """
+    if mode == "keep" or not caps:
+        return atoms
+    out = [list(a) for a in atoms]
+    if mode == "merge":
+        for cap, kept in caps:
+            out[kept][4] += out[cap][4]
+    elif mode != "drop":
+        raise ValueError(f"unknown cap-charge mode '{mode}'")
+    remove = {cap for cap, _ in caps}
+    return [tuple(a) for i, a in enumerate(out) if i not in remove]
+
+
+def load_fragment(transition_dir: str, td_dir: str, name: str,
+                  caps: Optional[List[Tuple[int, int]]] = None,
+                  cap_mode: str = "keep") -> FragmentData:
     with open(os.path.join(td_dir, "td.json")) as f:
         td = json.load(f)["selected"]
+    caps = caps or []
+
+    def charges(kind):
+        atoms = read_atoms(os.path.join(transition_dir, f"{name}_{kind}.txt"))
+        return treat_cap_charges(atoms, caps, cap_mode)
+
     return FragmentData(
         name=name,
         cube_path=os.path.join(transition_dir, f"{name}.cub"),
-        tresp=read_atoms(os.path.join(transition_dir, f"{name}_tresp.txt")),
-        mulliken=read_atoms(os.path.join(transition_dir, f"{name}_mulliken.txt")),
+        tresp=charges("tresp"),
+        mulliken=charges("mulliken"),
         mu_eAng=np.asarray(td["mu_au"]) * BOHR_TO_ANG,
         energy_eV=td["energy_eV"],
         f=td["f"],
@@ -111,6 +136,7 @@ def run_couplings(fragments: List[FragmentData], ccfg, out_dir: str) -> Dict[str
 
     result = {
         "dielectric": ccfg.dielectric,
+        "cap_charges": ccfg.cap_charges,
         "fragments": [{"name": f.name, "energy_eV": f.energy_eV, "f": f.f,
                        "mu_D": float(np.linalg.norm(f.mu_eAng) * 4.80320427),
                        "mu_eAng": f.mu_eAng.tolist()} for f in fragments],
@@ -126,6 +152,7 @@ def run_couplings(fragments: List[FragmentData], ccfg, out_dir: str) -> Dict[str
 
 def format_report(result: Dict[str, Any], methods: List[str]) -> str:
     lines = ["# EECC couplings from automated TD-DFT", f"# dielectric = {result['dielectric']}",
+             f"# cap charges (TrESP/TrMulliken) = {result.get('cap_charges', 'keep')}",
              "# " + result["note"], "#", "# Fragments"]
     for fr in result["fragments"]:
         lines.append(f"#   {fr['name']:<8s} E = {fr['energy_eV']:.4f} eV   f = {fr['f']:.4f}   "
