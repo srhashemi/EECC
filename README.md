@@ -22,6 +22,12 @@ For visualization tools (matplotlib):
 pip install -e ".[viz]"
 ```
 
+For the automated TD-DFT pipeline (`eecc run`; PySCF, pyscf-dispersion, geomeTRIC, PyYAML):
+
+```bash
+pip install -e ".[qm]"
+```
+
 For development (pytest):
 
 ```bash
@@ -146,6 +152,99 @@ eecc view cubeA.cub [--cubeB cubeB.cub] [--center] [--align] [--save image.png]
 eecc plot-density cubeA.cub cubeB.cub [--plane z] [--index 50]
 ```
 
+## Automated pipeline: from geometry to couplings
+
+`eecc run` automates the whole fragment workflow with [PySCF](https://pyscf.org),
+without Gaussian or Multiwfn:
+
+1. **opt**: optimize the oligomer ground state (default B3LYP-D3(BJ)/def2-SVP; optional frequencies).
+2. **fragments**: split it into chromophores. Bonds between fragments are cut and
+   capped with H along the cut bond. Separate molecules (`mode: auto`) need no capping.
+3. **td**: TD-DFT on each fragment (default TD-ωB97X-D/6-31G(d) with Cartesian d
+   functions, as in Gaussian) and its S0→Sn transition density matrix.
+4. **transition**: transition-density cube, transition Mulliken charges and TrESP
+   charges fitted to the exact electrostatic potential of the transition density.
+5. **couplings**: TDC (FFT and/or direct), TrESP, TrMulliken, point-dipole and
+   extended-dipole couplings for every fragment pair.
+
+```bash
+eecc run config.yaml                      # run all stages locally
+eecc run config.yaml --stage td --fragment 2
+eecc run config.yaml --slurm              # prep job -> one array task per fragment -> analysis
+eecc run config.yaml --dry-run            # write the Slurm scripts only
+```
+
+Results go to `<workdir>/05_couplings/couplings.txt` (and `.json`). Each stage
+records a hash of the settings it depends on, so a rerun skips finished stages
+and resumes an interrupted optimization. Changing, for example, the TD settings
+reruns only the TD stage and the stages after it.
+
+A fully commented configuration for the BODIPY dimer is in
+[`examples/qm/bodipy_dimer/config.yaml`](examples/qm/bodipy_dimer/config.yaml).
+A minimal configuration for two separate molecules:
+
+```yaml
+geometry: pair.xyz
+fragments:
+  mode: auto
+opt:
+  enabled: false
+```
+
+Notes:
+
+- The transition charges are fitted to the exact transition density, so no
+  `--scale` correction is needed for them.
+- PySCF does not implement the dispersion term of ωB97X-D. It is a
+  geometry-only energy shift, so excitation energies and transition densities are
+  unaffected. For that reason ωB97X-D is refused for optimizations.
+- `opt.convergence` picks a geomeTRIC criteria set (default `gau`, Gaussian's
+  force and displacement thresholds plus a 10⁻⁶ Eh energy change), and
+  `opt.thresholds` overrides single criteria. Loosening them saves little on
+  flexible oligomers: there the step size, not the force, keeps the optimization
+  going, and stopping early leaves soft modes (such as substituent twists) unrelaxed.
+- The default optimization grid `[99, 590]` matches Gaussian's UltraFine. On the
+  BODIPY dimer (128 atoms), `opt.grid: [75, 302]` makes each step about 35% faster
+  but changes the gradient by up to 2×10⁻⁴ Eh/Bohr, enough to shift the minimum
+  along soft modes. Use it only for rigid molecules.
+- Only closed-shell systems are supported. Signs of the couplings are arbitrary
+  because the phase of each fragment's transition density is arbitrary.
+
+### Validation against the published BODIPY oligomers
+
+Run with the defaults on the fragment geometries of the published dataset
+(doi:10.5878/pyja-rd94; Gaussian 16 + Multiwfn), the pipeline reproduces the
+published couplings (cm⁻¹; published / `eecc run`, with the arbitrary signs of
+`eecc run` aligned to the published ones):
+
+| System | Pair | R (Å) | TDC (direct) | TrESP | TrMulliken |
+|---|---|---|---|---|---|
+| Dimer | 1–2 | 8.58 | 967 / 952 | 1141 / 1177 | 816 / 836 |
+| Trimer¹ | 1–2 | 8.65 | 954 / 937 | 1117 / 1152 | 803 / 820 |
+| | 1–3 | 16.78 | 104 / 102 | 106 / 104 | 95 / 97 |
+| | 2–3 | 9.68 | −937 / −923 | −1111 / −1141 | −784 / −800 |
+| Tetramer | 1–2 | 9.68 | −937 / −924 | −1112 / −1142 | −784 / −799 |
+| | 1–3 | 16.81 | −103 / −102 | −106 / −104 | −94 / −95 |
+| | 1–4 | 24.71 | 30 / 29 | 30 / 29 | 28 / 28 |
+| | 2–3 | 8.66 | −935 / −932 | −1092 / −1127 | −791 / −803 |
+| | 2–4 | 17.11 | 102 / 101 | 105 / 103 | 94 / 96 |
+| | 3–4 | 8.66 | 953 / 944 | 1119 / 1151 | 802 / 819 |
+
+¹ The published trimer used 6-311G(d,p); `eecc run` used the default 6-31G(d).
+
+TDC agrees within 2 %, TrESP within 3.5 % and TrMulliken within 2.5 %. Compare
+against the published *direct* TDC values: the published FFT values depend on
+the cube grid (dimer: 990 FFT vs 967 direct).
+
+Two further checks on the dimer:
+
+- **Automatic cutting and capping** (`mode: ranges`) gives couplings about 5 %
+  smaller (TDC 906 cm⁻¹). The dataset fragments carry a pyramidal cap
+  hydrogen (H–C–C 110°, 55° out of the ring plane) on an aromatic carbon;
+  `eecc run` places it in the ring plane along the cut bond.
+- **Re-optimizing the dimer** (B3LYP-D3(BJ)/def2-SVP in PySCF, 26 steps) changes
+  the couplings by about 1 % (TDC 899 cm⁻¹).
+
 ## Package Structure
 
 ```
@@ -181,11 +280,22 @@ src/eecc/
 │   ├── mol_plot.py       # 3D molecule rendering with bond inference
 │   └── viewer.py         # Interactive molecule viewer
 │
-└── workflows/            # High-level calculation workflows
-    ├── intramolecular.py # Intramolecular coupling workflow
-    ├── intermolecular.py # Intermolecular coupling workflow
-    ├── tdc_two_monomers.py  # TDC from two separate monomer cubes
-    └── tdc_one_dimer.py     # TDC from a single dimer cube
+├── workflows/            # High-level calculation workflows
+│   ├── intramolecular.py # Intramolecular coupling workflow
+│   ├── intermolecular.py # Intermolecular coupling workflow
+│   ├── tdc_two_monomers.py  # TDC from two separate monomer cubes
+│   └── tdc_one_dimer.py     # TDC from a single dimer cube
+│
+└── qm/                   # Automated TD-DFT pipeline (requires eecc[qm])
+    ├── config.py         # YAML configuration and validation
+    ├── structure.py      # XYZ I/O, connectivity, fragments, H capping
+    ├── pyscf_setup.py    # PySCF molecule and Kohn-Sham construction
+    ├── ground.py         # Geometry optimization and frequencies
+    ├── excited.py        # TDDFT and transition density matrices
+    ├── transition.py     # Cube files, transition Mulliken and TrESP charges
+    ├── couplings.py      # Pairwise couplings via the EECC methods
+    ├── pipeline.py       # Restartable stage runner
+    └── slurm.py          # Slurm job submission
 ```
 
 ## Python API
@@ -268,6 +378,7 @@ pytest tests/ -v
 | scipy      | >= 1.7   | Core             |
 | matplotlib | >= 3.5   | Visualization    |
 | pytest     | >= 7.0   | Testing          |
+| pyscf, pyscf-dispersion, geomeTRIC, PyYAML | see `pyproject.toml` | `eecc run` |
 
 ## Citation
 
