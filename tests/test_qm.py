@@ -474,3 +474,38 @@ def test_slurm_physical_cores_hint(tmp_path):
     cfg = _small_config(tmp_path, geo, slurm={"account": "p", "physical_cores": False})
     off = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
     assert not any("nomultithread" in open(p).read() for p in off)
+
+
+def test_diabatization_recovers_fragment_states_and_davydov_coupling(tmp_path):
+    """Stacked ethylene dimer: LE diabats match the fragment S1 and the Davydov splitting."""
+    from eecc.qm.diabatize import diabatize_from_pipeline
+    from eecc.qm.excited import HARTREE_TO_EV
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.pyscf_setup import build_mol, build_rks
+
+    dimer = _stacked_dimer(4.0)
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(dimer, str(geo))
+    cfg = _small_config(tmp_path, geo, td={"nstates": 3}, couplings={"methods": ["tresp"]})
+    pipe = Pipeline(cfg, log=lambda *a: None)
+    pipe.run()
+
+    mol = build_mol(dimer, "sto-3g", None, 0, 0, 2000, verbose=0)
+    mf = build_rks(mol, cfg.td.xc, cfg.td.grid, False, 1e-9)
+    mf.kernel()
+    mf.grids.atom_grid = tuple(cfg.td.response_grid); mf.grids.build()
+    td = mf.TDDFT(); td.nstates = 6; td.conv_tol = 1e-6; td.kernel()
+    E = np.asarray(td.e) * HARTREE_TO_EV
+    x = np.array([xy[0] for xy in td.xy]); y = np.array([xy[1] for xy in td.xy])
+
+    res = diabatize_from_pipeline(pipe, mol, mf.mo_coeff, mf.mo_occ, x, y, E, include_ct=False)
+    e_frag = json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json")))["selected"]["energy_eV"]
+    assert np.all(res.completeness > 0.9)
+    assert abs(res.H_eV[0, 0] - res.H_eV[1, 1]) < 1e-3  # symmetric dimer
+    assert abs(res.H_eV[0, 0] - e_frag) < 0.05
+    # the LE block reproduces the energies of the two adiabatic states carrying the LE character
+    # (the Davydov pair), so its coupling is half their splitting
+    pair = np.argsort(-np.sum(res.D ** 2, axis=1))[:2]
+    assert np.allclose(np.linalg.eigvalsh(res.H_eV), np.sort(E[pair]), atol=0.02)
+    res_ct = diabatize_from_pipeline(pipe, mol, mf.mo_coeff, mf.mo_occ, x, y, E, include_ct=True)
+    assert res_ct.H_eV.shape == (4, 4) and res_ct.labels[2] == "CT(frag1->frag2)"
