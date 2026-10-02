@@ -54,8 +54,12 @@ def run_excited_states(
     if not mf.converged:
         raise RuntimeError(f"{name}: SCF did not converge")
 
+    if td_cfg.response_grid:
+        mf.grids.atom_grid = tuple(td_cfg.response_grid)  # XC kernel of the response only
+        mf.grids.build()
     td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
     td.nstates = td_cfg.nstates
+    td.conv_tol = td_cfg.davidson_tol
     td.kernel()
     conv = np.atleast_1d(td.converged)
     k = td_cfg.state - 1
@@ -86,6 +90,9 @@ def run_excited_states(
         "basis": td_cfg.basis,
         "cartesian": use_cartesian(td_cfg.basis, td_cfg.cart),
         "method": td_cfg.method,
+        "grid": list(td_cfg.grid),
+        "response_grid": list(td_cfg.response_grid) if td_cfg.response_grid else None,
+        "davidson_tol": td_cfg.davidson_tol,
         "scf_energy_Eh": float(mf.e_tot),
         "state": td_cfg.state,
         "excitation_energies_eV": energies.tolist(),

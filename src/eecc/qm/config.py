@@ -66,8 +66,13 @@ class TDConfig:
     method: str = "tddft"  # 'tddft' (full, as Gaussian TD) or 'tda'
     state: int = 1  # 1-based excited state used for the couplings
     grid: List[int] = field(default_factory=lambda: [99, 590])
+    # Grid for the TDDFT response (XC kernel) only; the SCF uses 'grid'. On the BODIPY
+    # fragment [75, 302] reproduces S1, f and the transition density of [99, 590] to six
+    # digits at ~1.6x the speed. null: use 'grid'.
+    response_grid: Optional[List[int]] = field(default_factory=lambda: [75, 302])
     density_fit: bool = False
-    conv_tol: float = 1e-9
+    conv_tol: float = 1e-9  # SCF
+    davidson_tol: float = 1e-4  # TDDFT residual; 1e-5 gives the same states ~1.3x slower
 
 
 @dataclass
@@ -119,6 +124,9 @@ class ResourcesConfig:
 class SlurmConfig:
     account: Optional[str] = None
     partition: str = "shared"
+    # One thread per physical core (--hint=nomultithread). Hyperthreads add little to
+    # PySCF: on Dardel the same job ran ~2x faster per step with 32 physical cores.
+    physical_cores: bool = True
     # CPUs/memory for optimization and fragment TDDFT jobs. On partitions that
     # allocate cores by memory (e.g. Dardel 'shared', ~0.87 GB per core), keep
     # mem <= cpus x that ratio to avoid being billed for extra cores.
@@ -205,6 +213,7 @@ HASH_IGNORED = {"memory_mb", "maxsteps"}
 # {section: {field: old default}}.
 CHANGED_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "couplings": {"cap_charges": "keep", "tdc_boundary": "periodic"},
+    "td": {"response_grid": None, "davidson_tol": 1e-5},
 }
 
 
@@ -291,6 +300,11 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError("opt.thresholds must be positive")
     if cfg.td.method not in VALID_TD_METHODS:
         raise ValueError(f"td.method must be one of {VALID_TD_METHODS}")
+    rg = cfg.td.response_grid
+    if rg is not None and (len(rg) != 2 or min(rg) <= 0):
+        raise ValueError("td.response_grid must be [radial, angular] or null")
+    if cfg.td.davidson_tol <= 0:
+        raise ValueError("td.davidson_tol must be positive")
     if not 1 <= cfg.td.state <= cfg.td.nstates:
         raise ValueError("td.state must be between 1 and td.nstates")
     bad = set(cfg.couplings.methods) - set(VALID_METHODS)

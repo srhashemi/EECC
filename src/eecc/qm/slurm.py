@@ -32,6 +32,10 @@ def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
         f"#SBATCH -J {pipe.cfg.name}-{job}",
         "#SBATCH -n 1",
         f"#SBATCH -c {cpus}",
+    ]
+    if s.physical_cores:
+        lines.append("#SBATCH --hint=nomultithread")
+    lines += [
         f"#SBATCH --mem={mem}",
         f"#SBATCH -t {time}",
     ]

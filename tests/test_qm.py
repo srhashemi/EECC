@@ -354,9 +354,11 @@ def test_changed_defaults_invalidate_old_results():
     explicit_old = {**base, "couplings": {"cap_charges": "keep", "tdc_boundary": "periodic"}}
     assert config_from_dict(explicit_old).section_hash("couplings") == stored_before_change("couplings", {})
     # 6-311G used Cartesian d functions under the original rule, spherical ones now
-    tz = config_from_dict({**base, "td": {"basis": "6-311g(d,p)"}})
+    # (other TD settings pinned to their old defaults to isolate the basis rule)
+    old_td = {"response_grid": None, "davidson_tol": 1e-5}
+    tz = config_from_dict({**base, "td": {"basis": "6-311g(d,p)", **old_td}})
     assert tz.section_hash("td") != stored_before_change("td", {"basis": "6-311g(d,p)"})
-    pople = config_from_dict({**base, "td": {"basis": "6-31g(d)"}})
+    pople = config_from_dict({**base, "td": {"basis": "6-31g(d)", **old_td}})
     assert pople.section_hash("td") == stored_before_change("td", {})
 
 
@@ -446,3 +448,29 @@ def test_slurm_scripts_tolerate_unset_variables_in_setup(tmp_path):
     for path in submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True):
         text = open(path).read()
         assert "set -eo pipefail" in text and "set -u" not in text and "-euo" not in text
+
+
+def test_fast_tddft_settings_are_new_defaults():
+    """Response grid, Davidson tolerance and physical cores; TD results from before stay distinguishable."""
+    import hashlib
+
+    base = {"geometry": "x.xyz", "fragments": {"mode": "auto"}}
+    legacy = hashlib.sha256(json.dumps({"td": {}}, sort_keys=True).encode()).hexdigest()[:16]
+    assert config_from_dict(base).section_hash("td") != legacy
+    old = {**base, "td": {"response_grid": None, "davidson_tol": 1e-5}}
+    assert config_from_dict(old).section_hash("td") == legacy
+    with pytest.raises(ValueError, match="response_grid"):
+        config_from_dict({**base, "td": {"response_grid": [75]}})
+
+
+def test_slurm_physical_cores_hint(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.slurm import submit
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    on = submit(Pipeline(_small_config(tmp_path, geo, slurm={"account": "p"})), str(tmp_path / "c.yaml"), dry_run=True)
+    assert all("#SBATCH --hint=nomultithread" in open(p).read() for p in on)
+    cfg = _small_config(tmp_path, geo, slurm={"account": "p", "physical_cores": False})
+    off = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
+    assert not any("nomultithread" in open(p).read() for p in off)

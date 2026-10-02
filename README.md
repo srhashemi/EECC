@@ -217,6 +217,14 @@ Notes:
   separation. `tdc_boundary: periodic` reproduces the published workflow, whose
   periodic images make distant pairs inaccurate (BODIPY tetramer, 24.7 Å apart:
   −14 cm⁻¹ instead of −29 cm⁻¹).
+- TDDFT speed: the TDDFT step, not the SCF, dominates the cost. The defaults evaluate
+  the XC kernel of the response on a `[75, 302]` grid (`td.response_grid`, SCF on
+  `td.grid`), stop the Davidson solver at `td.davidson_tol: 1e-4`, and run Slurm jobs
+  on physical cores (`slurm.physical_cores`). For a BODIPY fragment (624 basis
+  functions) this cuts the TDDFT from about 5.4 h to 1.5 h on 32 cores with identical
+  S1 energy, oscillator strength and transition density. TDA is faster but moves the
+  bright BODIPY state above a dark one, and density fitting does not speed up the
+  TDDFT step.
 - Only closed-shell systems are supported. Signs of the couplings are arbitrary
   because the phase of each fragment's transition density is arbitrary.
 
