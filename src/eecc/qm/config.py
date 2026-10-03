@@ -114,6 +114,16 @@ class CouplingsConfig:
 
 
 @dataclass
+class SystemConfig:
+    # Whole-system TDDFT with the 'td' settings, diabatized onto the fragment states:
+    # total couplings (exchange, overlap, polarization, CT mixing) next to the Coulomb ones.
+    enabled: bool = False
+    nstates: int = 0  # 0: four per fragment
+    include_ct: bool = True  # HOMO->LUMO charge-transfer states between every fragment pair
+    memory_mb: Optional[int] = None
+
+
+@dataclass
 class ResourcesConfig:
     threads: int = 0  # 0: take OMP_NUM_THREADS / all available
     memory_mb: int = 16000
@@ -139,6 +149,11 @@ class SlurmConfig:
     opt_partition: Optional[str] = None
     opt_cpus: Optional[int] = None
     opt_mem: Optional[str] = None
+    # Whole-system TDDFT job (system.enabled): one node, all cores.
+    system_partition: str = "main"
+    system_cpus: int = 128
+    system_mem: str = "0"
+    time_system: str = "24:00:00"
     time_opt: str = "24:00:00"
     time_td: str = "12:00:00"  # one fragment TDDFT; ~65-atom chromophores need 5-7 h on 32 cores
     time_analysis: str = "02:00:00"
@@ -157,6 +172,7 @@ class PipelineConfig:
     td: TDConfig = field(default_factory=TDConfig)
     transition: TransitionConfig = field(default_factory=TransitionConfig)
     couplings: CouplingsConfig = field(default_factory=CouplingsConfig)
+    system: SystemConfig = field(default_factory=SystemConfig)
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
     # Directory of the config file; relative paths are resolved against it.
@@ -312,6 +328,10 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError(f"Unknown coupling method(s) {sorted(bad)}; allowed: {VALID_METHODS}")
     if cfg.couplings.cap_charges not in ("merge", "drop", "keep"):
         raise ValueError("couplings.cap_charges must be 'merge', 'drop' or 'keep'")
+    if cfg.system.enabled and not cfg.geometry:
+        raise ValueError("system.enabled needs 'geometry' (the whole system)")
+    if cfg.system.nstates < 0:
+        raise ValueError("system.nstates must be >= 0")
     if cfg.couplings.tdc_boundary not in ("free", "periodic"):
         raise ValueError("couplings.tdc_boundary must be 'free' or 'periodic'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:

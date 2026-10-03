@@ -3,6 +3,8 @@
 1. prep: optimization + fragments (one job)
 2. fragments: TDDFT + transition data, one array task per fragment
 3. analysis: couplings, after all array tasks succeeded
+4. with system.enabled: system (whole-system TDDFT, one node) after prep, in
+   parallel with the fragments, and diabatize after both
 
 Stages that are already complete are skipped, so resubmitting after a failure
 reruns only the missing jobs and array tasks.
@@ -67,7 +69,7 @@ def _array_spec(tasks: List[int]) -> str:
 
 
 def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]:
-    """Write the three job scripts and submit them with dependencies.
+    """Write the job scripts and submit them with dependencies.
 
     Returns the job ids (or script paths when *dry_run* is set).
     """
@@ -99,6 +101,15 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         "analysis": _script(pipe, "analysis", s.time_analysis, [f"{run} --stage couplings"],
                             cpus=s.analysis_cpus, mem=s.analysis_mem),
     }
+    if pipe.cfg.system.enabled:
+        scripts["system"] = _script(pipe, "system", s.time_system, [f"{run} --stage system"],
+                                    cpus=s.system_cpus, mem=s.system_mem, partition=s.system_partition)
+        scripts["diabatize"] = _script(pipe, "diabatize", s.time_analysis, [f"{run} --stage diabatize"],
+                                       cpus=s.analysis_cpus, mem=s.analysis_mem)
+        if pipe.is_done("system"):
+            scripts.pop("system")
+        if pipe.is_done("diabatize"):
+            scripts.pop("diabatize")
     # Skip jobs whose stages are already complete (e.g. when resubmitting).
     if prep_done:
         scripts.pop("prep")
@@ -112,16 +123,20 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     if dry_run:
         return list(paths.values())
 
-    def sbatch(path: str, dep: Optional[str] = None) -> str:
+    def sbatch(path: str, deps: List[str]) -> str:
         cmd = ["sbatch", "--parsable"]
-        if dep:
-            cmd.append(f"--dependency=afterok:{dep}")
+        if deps:
+            cmd.append("--dependency=afterok:" + ":".join(deps))
         cmd.append(path)
         return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip().split(";")[0]
 
-    jobs, dep = [], None
-    for key in ("prep", "frag", "analysis"):
+    # job -> jobs it waits for (only those submitted now; finished stages need no wait)
+    waits = {"prep": [], "frag": ["prep"], "analysis": ["frag"], "system": ["prep"],
+             "diabatize": ["system", "frag"]}
+    ids: dict = {}
+    for key in ("prep", "frag", "analysis", "system", "diabatize"):
         if key in paths:
-            dep = sbatch(paths[key], dep)
-            jobs.append(f"{key} {dep}")
-    return jobs
+            # analysis also needs prep when the fragment jobs are skipped
+            deps = [ids[w] for w in waits[key] if w in ids] or ([ids["prep"]] if "prep" in ids and key != "prep" else [])
+            ids[key] = sbatch(paths[key], deps)
+    return [f"{key} {job}" for key, job in ids.items()]

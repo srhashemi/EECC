@@ -59,6 +59,11 @@ couplings:
   dielectric: 1.0
   tdc_pad: 3
 
+system:                          # whole-system TDDFT + exciton Hamiltonian (one full node, ~11 h here)
+  enabled: false
+  nstates: 0                     # 0: four per fragment
+  include_ct: true               # HOMO->LUMO charge-transfer states between fragments
+
 resources:
   threads: 0                     # 0 = OMP_NUM_THREADS / all cores
   memory_mb: 24000

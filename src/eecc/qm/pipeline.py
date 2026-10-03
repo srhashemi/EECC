@@ -20,7 +20,13 @@ from eecc.qm.structure import (
 )
 
 
-STAGES = ("opt", "fragments", "td", "transition", "couplings")
+STAGES = ("opt", "fragments", "td", "transition", "couplings", "system", "diabatize")
+# Stages whose results each stage uses (a rerun invalidates everything that depends on it).
+DEPENDS = {
+    "fragments": ("opt",), "td": ("fragments",), "transition": ("td",), "couplings": ("transition",),
+    "system": ("opt",), "diabatize": ("system", "td"),
+}
+PER_FRAGMENT = ("td", "transition")
 
 
 def _file_hash(path: str) -> str:
@@ -62,6 +68,12 @@ class Pipeline:
             return _combine(h, cfg.section_hash("opt", "charge", "spin"))
         # Frequencies do not change the geometry, so they do not invalidate later stages.
         h = _combine(h, cfg.section_hash("opt", "charge", "spin", ignore=("freq",)))
+        if stage == "system":  # whole system with the td method; independent of the fragments
+            return _combine(h, cfg.section_hash("td", ignore=("nstates", "state")),
+                            cfg.section_hash("system", ignore=("include_ct",)))
+        if stage == "diabatize":
+            return _combine(self.expected_hash("system"), self.expected_hash("td"),
+                            cfg.section_hash("system"))
         h = _combine(h, cfg.section_hash("fragments"))
         if stage == "fragments":
             return h
@@ -88,8 +100,13 @@ class Pipeline:
         A rerun (for example with --force) may produce different results under the
         same settings, so stages built on the previous results must run again.
         """
-        for later in STAGES[STAGES.index(stage) + 1:]:
-            if later in ("td", "transition"):
+        dependents, grew = {stage}, True
+        while grew:
+            new = {s for s, deps in DEPENDS.items() if dependents.intersection(deps)} - dependents
+            dependents |= new
+            grew = bool(new)
+        for later in [s for s in STAGES if s in dependents and s != stage]:
+            if later in PER_FRAGMENT:
                 d = self.stage_dir(later)
                 names = [fragment] if fragment else (os.listdir(d) if os.path.isdir(d) else [])
                 markers = [os.path.join(d, n, ".done") for n in names]
@@ -256,6 +273,34 @@ class Pipeline:
         self.log(format_report(result, methods))
         self._mark_done("couplings")
 
+    def run_system(self, force: bool = False) -> None:
+        if self.is_done("system") and not force:
+            self.log("[system] up to date")
+            return
+        if not self.is_done("opt"):
+            raise RuntimeError("run the 'opt' stage first")
+        from eecc.qm.system import run_system_td
+        opt_xyz = os.path.join(self.stage_dir("opt"), "optimized.xyz")
+        structure = read_xyz(opt_xyz if os.path.exists(opt_xyz) else self.cfg.path(self.cfg.geometry))
+        nstates = self.cfg.system.nstates or 4 * self.planned_fragment_count()
+        run_system_td(structure, self.cfg, self.stage_dir("system"), nstates, self.log)
+        self._mark_done("system")
+
+    def run_diabatize(self, force: bool = False) -> None:
+        if self.is_done("diabatize") and not force:
+            self.log("[diabatize] up to date")
+            return
+        if not self.is_done("system"):
+            raise RuntimeError("run the 'system' stage first")
+        missing = [n for n in self.fragment_names() if not self.is_done("td", n)]
+        if missing:
+            raise RuntimeError(f"td stage not finished for {missing}")
+        from eecc.qm.system import run_diabatization
+        d = self.stage_dir("diabatize")
+        run_diabatization(self, d)
+        self.log(open(os.path.join(d, "diabatic.txt"), encoding="utf-8").read())
+        self._mark_done("diabatize")
+
     # --------------------------------------------------------
     # Marking existing results as current
     # --------------------------------------------------------
@@ -268,6 +313,8 @@ class Pipeline:
             "transition": [f"{fragment}.cub", f"{fragment}_tresp.txt",
                            f"{fragment}_mulliken.txt", f"{fragment}_transition.json"],
             "couplings": ["couplings.json", "couplings.txt"],
+            "system": ["system_td.npz", "system_td.json", "system.xyz"],
+            "diabatize": ["diabatic.json", "diabatic.txt"],
         }[stage]
         return os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
 
@@ -314,5 +361,8 @@ class Pipeline:
                     (self.run_td if st == "td" else self.run_transition)(n, force)
             elif st == "couplings":
                 self.run_couplings(force)
+            elif st in ("system", "diabatize"):
+                if stage == st or self.cfg.system.enabled:
+                    (self.run_system if st == "system" else self.run_diabatize)(force)
             else:
                 raise ValueError(f"unknown stage '{st}'")
