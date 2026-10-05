@@ -184,17 +184,28 @@ default that affects results changes, stages computed under the old default are
 rerun. After an upgrade that should not change results, `eecc run config.yaml
 --restamp` marks existing results as current.
 
-A fully commented configuration for the BODIPY dimer is in
-[`examples/qm/bodipy_dimer/config.yaml`](examples/qm/bodipy_dimer/config.yaml).
-A minimal configuration for two separate molecules:
+### Getting started
 
-```yaml
-geometry: pair.xyz
-fragments:
-  mode: auto
-opt:
-  enabled: false
+`eecc init` writes a `config.yaml` that lists every option with its default and
+a comment, so the whole configuration is in one file to edit. The most common
+choices can be set directly:
+
+```bash
+eecc init pair.xyz                        # two separate molecules: fragments found automatically
+eecc init dimer.xyz --ranges "57-112,121-128" "1-56,113-120"   # covalent oligomer: atoms per chromophore
+eecc init dimer.xyz --ranges ... --functional cam-b3lyp --basis def2-svp --nstates 6 \
+          --no-opt --account naiss2025-5-749
+eecc init --help                          # all choices (fragment files, TDA, state, whole system, ...)
 ```
+
+For a single covalent molecule without `--ranges`, the file marks
+`fragments.ranges` as required. `eecc init` and `eecc run` check the
+configuration before anything runs: misspelled keys (with a suggestion), values
+of the wrong type (such as an unquoted `12:00:00`, which YAML reads as seconds),
+and functionals or basis sets that PySCF does not know or that lack an element
+of the molecule. All options are listed under
+[Configuration reference](#configuration-reference); a configuration for the
+BODIPY dimer is in [`examples/qm/bodipy_dimer/config.yaml`](examples/qm/bodipy_dimer/config.yaml).
 
 Notes:
 
@@ -314,6 +325,90 @@ Two further checks on the dimer:
 - **Re-optimizing the dimer** (B3LYP-D3(BJ)/def2-SVP in PySCF, 26 steps) changes
   the couplings by about 1 % (TDC 899 cm⁻¹).
 
+### Configuration reference
+
+Every option of `config.yaml`, with its default. Only `geometry` (or
+`fragments.files`) and the fragment definition are required.
+
+<!-- options:start (generated: python -m eecc.qm.options README.md) -->
+| Option | Default | Description |
+|---|---|---|
+| `geometry` | `''` | XYZ file of the whole system (Å); relative to this file |
+| `name` | `eecc_run` | run name, used in Slurm job names |
+| `workdir` | `work` | output directory; relative to this file |
+| `charge` | `0` | total charge |
+| `spin` | `0` | 2S; only closed-shell (0) is supported |
+| `fragments.mode` | `ranges` | ranges: atom indices per chromophore (cut and capped); auto: one fragment per separate molecule; files: ready-made fragment XYZ files |
+| `fragments.ranges` | `[]` | mode ranges: 1-based atom indices per fragment, e.g. ["1-56,113-120", "57-112"] |
+| `fragments.files` | `[]` | mode files: one XYZ file per fragment (no cutting or capping) |
+| `fragments.charges` | `[]` | charge of each fragment; empty: all neutral |
+| `fragments.cap.element` | `H` | element of the cap atom |
+| `fragments.cap.bond_lengths` | `{B: 1.19, C: 1.09, N: 1.01, O: 0.96, P: 1.42, S: 1.34, Si: 1.48}` | cap bond length (Å) by element of the capped atom |
+| `fragments.cap.default_bond_length` | `1.09` | cap bond length (Å) for other elements |
+| `fragments.bond_scale` | `1.2` | atoms are bonded if closer than this × the sum of covalent radii |
+| `opt.enabled` | `true` | optimize the geometry first; false if it is already optimized |
+| `opt.xc` | `b3lyp` | functional |
+| `opt.basis` | `def2-svp` | basis set |
+| `opt.cart` | `null` | Cartesian d functions; null: as Gaussian (Cartesian for 6-31G-type bases) |
+| `opt.disp` | `d3bj` | dispersion correction (d3bj, d4, ...); null: none |
+| `opt.grid` | `[99, 590]` | DFT grid [radial, angular] |
+| `opt.density_fit` | `true` | density fitting (faster, negligible error for geometries) |
+| `opt.conv_tol` | `1.0e-09` | SCF convergence (Eh) |
+| `opt.maxsteps` | `200` | maximum optimization steps |
+| `opt.convergence` | `gau` | geomeTRIC criteria set: gau, gau_loose, gau_tight, gau_verytight, nwchem_loose, turbomole, interfrag_tight |
+| `opt.thresholds` | `{}` | override single criteria: energy (Eh), grms/gmax (Eh/Bohr), drms/dmax (Å) |
+| `opt.freq` | `false` | frequencies and imaginary-mode check after the optimization (expensive) |
+| `opt.memory_mb` | `null` | PySCF memory for this stage (MB); null: resources.memory_mb |
+| `td.xc` | `wb97x-d` | functional (any PySCF/libxc name, e.g. wb97x-d, cam-b3lyp, b3lyp, pbe0, m06-2x) |
+| `td.basis` | `6-31g(d)` | basis set (any PySCF name, e.g. 6-31g(d), 6-311g(d,p), def2-svp, def2-tzvp) |
+| `td.cart` | `null` | Cartesian d functions; null: as Gaussian (Cartesian for 6-31G-type bases) |
+| `td.nstates` | `10` | excited states computed per fragment |
+| `td.method` | `tddft` | tddft (full, as Gaussian TD) or tda (faster; check that the state order is right) |
+| `td.state` | `1` | excited state used for the couplings (1 = S1) |
+| `td.grid` | `[99, 590]` | DFT grid of the SCF [radial, angular] |
+| `td.response_grid` | `[75, 302]` | grid of the TDDFT response only (about 1.6× faster, same results); null: td.grid |
+| `td.density_fit` | `false` | density fitting (does not speed up the TDDFT step) |
+| `td.conv_tol` | `1.0e-09` | SCF convergence (Eh) |
+| `td.davidson_tol` | `0.0001` | TDDFT convergence; 1e-5 gives the same states about 1.3× slower |
+| `transition.cube.spacing` | `0.25` | grid spacing (Bohr), identical for all fragments |
+| `transition.cube.margin` | `6.0` | grid extent beyond the outermost atoms (Bohr) |
+| `transition.tresp.shells` | `[1.4, 1.6, 1.8, 2.0]` | fit-point shells at these multiples of the vdW radius |
+| `transition.tresp.density` | `5.0` | fit points per Å² on each shell |
+| `transition.tresp.dipole_constraint` | `true` | fitted charges reproduce the TDDFT transition dipole |
+| `transition.tresp.alpha` | `0.0` | ridge regularization of the fit |
+| `couplings.methods` | `[tdc_fft, tresp, mulliken, point_dipole, extended_dipole]` | any of tdc_fft, tdc_direct (slow, exact cross-check), tresp, mulliken, point_dipole, extended_dipole |
+| `couplings.dielectric` | `1.0` | relative permittivity screening the couplings |
+| `couplings.cap_charges` | `merge` | charges on cap atoms: merge into the capped atom, drop, or keep |
+| `couplings.tdc_pad` | `3` | FFT padding factor (periodic boundary only) |
+| `couplings.tdc_boundary` | `free` | TDC FFT boundary: free (exact at any distance) or periodic (as the published workflow; wrong for distant pairs) |
+| `couplings.tdc_direct_threshold` | `0.0005` | tdc_direct keeps voxels with |q| > threshold × max|q| |
+| `system.enabled` | `false` | also compute the whole system and diabatize it (one full node, hours to days) |
+| `system.nstates` | `0` | whole-system states; 0: four per fragment. LE + CT needs n² for n fragments |
+| `system.include_ct` | `true` | add HOMO→LUMO charge-transfer states between every fragment pair |
+| `system.memory_mb` | `null` | PySCF memory for the whole-system run (MB); null: resources.memory_mb |
+| `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
+| `resources.memory_mb` | `16000` | PySCF memory (MB) |
+| `resources.tmpdir` | `null` | PySCF scratch directory; null: default |
+| `slurm.account` | `null` | allocation (sbatch -A), e.g. naiss2025-5-749 |
+| `slurm.partition` | `shared` | partition of the optimization, fragment and analysis jobs |
+| `slurm.physical_cores` | `true` | one thread per physical core (--hint=nomultithread; about 2× faster) |
+| `slurm.cpus` | `32` | CPUs per optimization or fragment job |
+| `slurm.mem` | `28G` | memory per optimization or fragment job; on Dardel shared keep ≤ cpus × 0.87 GB |
+| `slurm.analysis_cpus` | `8` | CPUs of the prep, analysis and diabatize jobs |
+| `slurm.analysis_mem` | `16G` | memory of the prep, analysis and diabatize jobs |
+| `slurm.opt_partition` | `null` | partition of the optimization job; null: slurm.partition |
+| `slurm.opt_cpus` | `null` | CPUs of the optimization job; null: slurm.cpus |
+| `slurm.opt_mem` | `null` | memory of the optimization job ("0": whole node); null: slurm.mem |
+| `slurm.system_partition` | `main` | partition of the whole-system job; use long for trimers and larger |
+| `slurm.system_cpus` | `128` | CPUs of the whole-system job |
+| `slurm.system_mem` | `'0'` | memory of the whole-system job ("0": whole node) |
+| `slurm.time_system` | `'24:00:00'` | time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h) |
+| `slurm.time_opt` | `'24:00:00'` | time limit of the optimization job |
+| `slurm.time_td` | `'12:00:00'` | time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores) |
+| `slurm.time_analysis` | `'02:00:00'` | time limit of the analysis and diabatize jobs |
+| `slurm.setup` | `[]` | shell lines run before eecc, e.g. ["module load cray-python", "source venv/bin/activate"] |
+<!-- options:end -->
+
 ## Package Structure
 
 ```
@@ -357,6 +452,7 @@ src/eecc/
 │
 └── qm/                   # Automated TD-DFT pipeline (requires eecc[qm])
     ├── config.py         # YAML configuration and validation
+    ├── options.py        # Option descriptions: config template (eecc init), README reference
     ├── structure.py      # XYZ I/O, connectivity, fragments, H capping
     ├── pyscf_setup.py    # PySCF molecule and Kohn-Sham construction
     ├── ground.py         # Geometry optimization and frequencies

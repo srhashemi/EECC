@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import difflib
 import hashlib
 import json
 import os
@@ -280,19 +281,54 @@ def _build(cls, data: Optional[Dict[str, Any]], where: str):
     if not isinstance(data, dict):
         raise ValueError(f"'{where}' must be a mapping, got {type(data).__name__}")
     fields = {f.name: f for f in dataclasses.fields(cls) if not f.metadata.get("internal")}
-    unknown = set(data) - set(fields)
+    unknown = sorted(set(data) - set(fields))
     if unknown:
-        raise ValueError(f"Unknown key(s) in '{where}': {sorted(unknown)}; "
+        hints = [f"'{k}' (did you mean '{m[0]}'?)" if (m := difflib.get_close_matches(k, fields, 1, 0.6))
+                 else f"'{k}'" for k in unknown]
+        raise ValueError(f"Unknown key(s) in '{where or 'top level'}': {', '.join(hints)}; "
                          f"allowed: {sorted(fields)}")
+    defaults = cls()
     kwargs = {}
     for name, value in data.items():
         f = fields[name]
+        key = f"{where}.{name}" if where else name
         sub = f.default_factory if f.default_factory is not dataclasses.MISSING else None
         if dataclasses.is_dataclass(sub):
-            kwargs[name] = _build(sub, value, f"{where}.{name}" if where else name)
+            kwargs[name] = _build(sub, value, key)
         else:
-            kwargs[name] = value
+            kwargs[name] = _check_type(key, value, getattr(defaults, name), "Optional" in str(f.type))
     return cls(**kwargs)
+
+
+def _check_type(key: str, value: Any, default: Any, optional: bool) -> Any:
+    """Check *value* against the type of its default; returns it (numeric strings -> float)."""
+    if value is None:
+        if optional:
+            return None
+        raise ValueError(f"'{key}' cannot be null")
+    if default is None:  # optional settings without a default value: any type the stage accepts
+        return value
+    if isinstance(default, bool):
+        ok = isinstance(value, bool)
+    elif isinstance(default, int):
+        ok = isinstance(value, int) and not isinstance(value, bool)
+    elif isinstance(default, float):
+        if isinstance(value, str):  # YAML 1.1 reads 1e-5 (no decimal point) as a string
+            try:
+                value = float(value)
+            except ValueError:
+                pass
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+    else:
+        ok = isinstance(value, type(default))
+    if ok:
+        return value
+    kind = {bool: "true or false", int: "an integer", float: "a number", str: "a string",
+            list: "a list", dict: "a mapping"}.get(type(default), type(default).__name__)
+    hint = ""
+    if isinstance(default, str) and isinstance(value, int) and ":" in default:
+        hint = f' (quote times: "{default}"; unquoted 12:00:00 is read as a number of seconds)'
+    raise ValueError(f"'{key}' must be {kind}, got {value!r}{hint}")
 
 
 def validate(cfg: PipelineConfig) -> None:
@@ -336,6 +372,50 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError("couplings.tdc_boundary must be 'free' or 'periodic'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
         raise ValueError("transition.cube spacing and margin must be positive")
+
+
+def check_names(cfg: PipelineConfig) -> None:
+    """Check functionals and basis sets with PySCF before anything runs.
+
+    The basis set is checked for every element of the geometry (or fragment files),
+    so a basis that lacks an element (e.g. 6-31G(d) for iodine) fails here and not
+    in the first job. Needs the optional QM dependencies.
+    """
+    from pyscf import dft, gto
+
+    from eecc.qm.pyscf_setup import resolve_xc
+    from eecc.qm.structure import read_xyz
+
+    files = [cfg.geometry] if cfg.geometry else list(cfg.fragments.files)
+    elements = sorted({s for p in files if os.path.exists(cfg.path(p)) for s in read_xyz(cfg.path(p)).symbols})
+    stages = [("td", cfg.td)] + ([("opt", cfg.opt)] if cfg.opt.enabled else [])
+    problems = []
+    for name, sec in stages:
+        try:
+            dft.libxc.parse_xc(resolve_xc(sec.xc))
+        except (KeyError, ValueError):
+            problems.append(f"{name}.xc: unknown functional '{sec.xc}'")
+        try:
+            gto.basis.load(sec.basis, "H")
+        except KeyError:  # PySCF has no basis of this name at all
+            problems.append(f"{name}.basis: unknown basis set '{sec.basis}'")
+            continue
+        except gto.basis.BasisNotFoundError:  # exists, but not for H; the element check reports it
+            pass
+        missing = [el for el in elements if not _has_basis(sec.basis, el)]
+        if missing:
+            problems.append(f"{name}.basis: '{sec.basis}' has no functions for {', '.join(missing)}")
+    if problems:
+        raise ValueError("; ".join(problems))
+
+
+def _has_basis(basis: str, element: str) -> bool:
+    from pyscf import gto
+
+    try:
+        return bool(gto.basis.load(basis, element))
+    except (KeyError, gto.basis.BasisNotFoundError):
+        return False
 
 
 def config_from_dict(data: Dict[str, Any], base_dir: str = ".") -> PipelineConfig:
