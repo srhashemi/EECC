@@ -74,6 +74,95 @@ def test_config_paths_relative_to_file(tmp_path):
     assert cfg.section_hash("td") == load_config(str(p)).section_hash("td")
 
 
+def test_config_errors_are_explained():
+    with pytest.raises(ValueError, match="did you mean 'basis'"):
+        config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "td": {"basis_set": "sto-3g"}})
+    with pytest.raises(ValueError, match="must be quoted"):  # YAML reads unquoted 12:00:00 as 43200
+        config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "slurm": {"time_td": 43200}})
+    cfg = config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"},
+                            "slurm": {"system_mem": 0, "mem": 28000, "time_td": "720"}})
+    assert (cfg.slurm.system_mem, cfg.slurm.mem, cfg.slurm.time_td) == ("0", "28000", "720")
+    with pytest.raises(ValueError, match="'td.nstates' must be an integer"):
+        config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "td": {"nstates": "ten"}})
+    with pytest.raises(ValueError, match="'opt.enabled' must be true or false"):
+        config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "opt": {"enabled": "no"}})
+    with pytest.raises(ValueError, match="cannot be null"):
+        config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "td": {"basis": None}})
+    # YAML 1.1 reads 1e-5 as a string; numbers are accepted, and optional settings take null
+    cfg = config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"},
+                            "td": {"davidson_tol": "1e-5", "response_grid": None}})
+    assert cfg.td.davidson_tol == 1e-5 and cfg.td.response_grid is None
+
+
+def test_check_names(tmp_path):
+    from eecc.qm.config import check_names
+
+    geo = tmp_path / "mol.xyz"
+    save_xyz(Structure(["C", "I"], np.array([[0.0, 0, 0], [2.1, 0, 0]])), str(geo))
+    base = {"geometry": str(geo), "fragments": {"mode": "auto"}, "opt": {"enabled": False}}
+    check_names(config_from_dict({**base, "td": {"basis": "def2-svp", "xc": "cam-b3lyp"}}))
+    with pytest.raises(ValueError, match="has no functions for I"):
+        check_names(config_from_dict({**base, "td": {"basis": "6-31g(d)"}}))
+    with pytest.raises(ValueError, match="unknown functional 'b3lpy'.*unknown basis set '6-31gg'"):
+        check_names(config_from_dict({**base, "td": {"basis": "6-31gg", "xc": "b3lpy"}}))
+    check_names(config_from_dict({**base, "td": {"basis": "unc-def2-svp"}}))  # prefixed names, as PySCF
+    with pytest.raises(ValueError, match="unknown basis set 'nofile.nw'"):
+        check_names(config_from_dict({**base, "td": {"basis": "nofile.nw"}}))
+
+
+def test_options_are_documented_and_template_roundtrips(tmp_path):
+    import dataclasses
+    import yaml
+    from eecc.qm.config import PipelineConfig, _build
+    from eecc.qm.options import HELP, SECTION_HELP, config_template, iter_options, reference_markdown
+
+    keys = [k for k, _ in iter_options()]
+    assert sorted(keys) == sorted(HELP), "every option needs exactly one entry in eecc.qm.options.HELP"
+    sections = {".".join(k.split(".")[:i]) for k in keys for i in range(1, k.count(".") + 1)}
+    assert set(SECTION_HELP) <= sections
+    assert _build(PipelineConfig, yaml.safe_load(config_template()), "") == PipelineConfig()
+    cfg = config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"},
+                            "td": {"basis": "def2-svp", "nstates": 4}, "slurm": {"time_td": "03:00:00"}})
+    back = _build(PipelineConfig, yaml.safe_load(config_template(cfg)), "")
+    assert dataclasses.replace(back, base_dir=cfg.base_dir) == cfg
+    readme = os.path.join(os.path.dirname(__file__), os.pardir, "README.md")
+    assert reference_markdown() in open(readme, encoding="utf-8").read(), \
+        "README reference is out of date: python -m eecc.qm.options README.md"
+
+
+def test_cli_init(tmp_path, monkeypatch, capsys):
+    import sys
+    from eecc.cli import main
+
+    def init(*argv):
+        monkeypatch.setattr(sys, "argv", ["eecc", "init", *argv])
+        main()
+
+    save_xyz(_stacked_dimer(), str(tmp_path / "pair.xyz"))
+    save_xyz(ETHYLENE, str(tmp_path / "mono.xyz"))
+    monkeypatch.chdir(tmp_path)
+    init("pair.xyz", "--basis", "sto-3g", "--nstates", "4", "--account", "p", "--no-opt")
+    cfg = load_config(str(tmp_path / "config.yaml"))
+    assert (cfg.fragments.mode, cfg.td.basis, cfg.td.nstates, cfg.slurm.account, cfg.opt.enabled) == \
+        ("auto", "sto-3g", 4, "p", False)
+    assert cfg.path(cfg.geometry) == str(tmp_path / "pair.xyz") and cfg.name == "pair"
+    with pytest.raises(SystemExit, match="exists"):
+        init("pair.xyz")
+    # one covalent molecule without ranges: written, with ranges marked as required
+    init("mono.xyz", "-o", "mono.yaml")
+    text = open(tmp_path / "mono.yaml").read()
+    assert "REQUIRED" in text and "mode: ranges" in text
+    init("mono.xyz", "-o", "mono2.yaml", "--ranges", "1-3", "4-6", "--method", "tda")
+    cfg = load_config(str(tmp_path / "mono2.yaml"))
+    assert cfg.fragments.ranges == ["1-3", "4-6"] and cfg.td.method == "tda"
+    with pytest.raises(SystemExit, match="unknown functional"):
+        init("pair.xyz", "-o", "bad.yaml", "--functional", "b3lpy")
+    assert not os.path.exists(tmp_path / "bad.yaml")
+    (tmp_path / "broken.xyz").write_text("not an xyz file\n")
+    with pytest.raises(SystemExit, match="cannot read broken.xyz"):
+        init("broken.xyz", "-o", "bad.yaml")
+
+
 # ============================================================
 # === Structures and fragments ===============================
 # ============================================================

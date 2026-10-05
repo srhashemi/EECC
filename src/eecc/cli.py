@@ -100,14 +100,91 @@ def _cmd_plot_density(args):
     plot_two_density_slices(cubeA, cubeB, plane=args.plane, index=args.index)
 
 
+def _cmd_init(args):
+    import os
+
+    try:
+        import yaml  # noqa: F401
+        from eecc.qm.config import check_names, config_from_dict
+        from eecc.qm.options import config_template
+        from eecc.qm.structure import bonds, connected_components, read_xyz
+    except ImportError as exc:
+        sys.exit(f"eecc init needs the optional QM dependencies: pip install 'eecc[qm]' ({exc})")
+
+    out = os.path.abspath(args.output)
+    if os.path.exists(out) and not args.force:
+        sys.exit(f"{args.output} exists; use --force to overwrite")
+    base = os.path.dirname(out)
+    def rel(p):  # relative to the config file when nearby, else absolute
+        r = os.path.relpath(os.path.abspath(p), base)
+        return os.path.abspath(p) if r.startswith(os.pardir + os.sep + os.pardir) else r
+    if not args.geometry and not args.files:
+        sys.exit("give the geometry (XYZ file), or the fragment files with --files")
+    for p in ([args.geometry] if args.geometry else []) + (args.files or []):
+        if not os.path.exists(p):
+            sys.exit(f"file not found: {p}")
+
+    data = {"name": args.name or os.path.splitext(os.path.basename(args.geometry or out))[0],
+            "geometry": rel(args.geometry) if args.geometry else "", "charge": args.charge,
+            "fragments": {}, "opt": {}, "td": {}, "system": {}, "slurm": {}}
+    notes = {}
+    mode = args.fragments or ("files" if args.files else "ranges" if args.ranges else None)
+    if mode is None:  # separate molecules -> auto; one covalent system -> the user gives ranges
+        try:
+            s = read_xyz(args.geometry)
+        except (ValueError, IndexError) as exc:
+            sys.exit(f"error: cannot read {args.geometry}: {exc}")
+        n_mol = len(connected_components(len(s), bonds(s)))
+        mode = "auto" if n_mol > 1 else "ranges"
+        print(f"{args.geometry}: {len(s)} atoms, {n_mol} separate molecule(s) -> fragments.mode: {mode}")
+    data["fragments"]["mode"] = mode
+    if args.ranges:
+        data["fragments"]["ranges"] = args.ranges
+    if args.files:
+        data["fragments"]["files"] = [rel(p) for p in args.files]
+    if mode == "ranges" and not args.ranges:
+        notes["fragments.ranges"] = "REQUIRED: atom indices of each chromophore"
+    for key, value in (("xc", args.functional), ("basis", args.basis), ("nstates", args.nstates),
+                       ("state", args.state), ("method", args.method)):
+        if value is not None:
+            data["td"][key] = value
+    if args.no_opt:
+        data["opt"]["enabled"] = False
+    if args.system:
+        data["system"]["enabled"] = True
+    if args.account:
+        data["slurm"]["account"] = args.account
+    else:
+        notes["slurm.account"] = "set this to submit with --slurm"
+
+    no_ranges = "fragments.ranges" in notes
+    try:  # with placeholder ranges if they are missing, so everything else is checked now
+        cfg = config_from_dict({**data, "fragments": {**data["fragments"], "ranges": ["1", "2"]}}
+                               if no_ranges else data, base)
+        check_names(cfg)
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
+    if no_ranges:
+        cfg.fragments.ranges = []
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(config_template(cfg, notes))
+    print(f"Wrote {args.output}. Edit it, then run:  eecc run {args.output}   (or --slurm)")
+    for key, note in notes.items():
+        print(f"  {key}: {note}")
+
+
 def _cmd_run(args):
     try:
-        from eecc.qm.config import load_config
+        from eecc.qm.config import check_names, load_config
         from eecc.qm.pipeline import Pipeline
     except ImportError as exc:
         sys.exit(f"eecc run needs the optional QM dependencies: pip install 'eecc[qm]' ({exc})")
 
-    cfg = load_config(args.config)
+    try:
+        cfg = load_config(args.config)
+        check_names(cfg)
+    except ValueError as exc:
+        sys.exit(f"error in {args.config}: {exc}")
     pipe = Pipeline(cfg)
     if args.restamp:
         marked = pipe.restamp()
@@ -205,6 +282,32 @@ def main() -> None:
     p.add_argument("--plane", choices=["x", "y", "z"], default="z", help="Slice plane")
     p.add_argument("--index", type=int, default=None, help="Slice index")
     p.set_defaults(func=_cmd_plot_density)
+
+    # --- init (write a commented pipeline config) ---
+    p = sub.add_parser("init", help="Write a commented config.yaml for 'eecc run' (needs eecc[qm])",
+                       description="Write a config.yaml with every pipeline option, its default and a "
+                                   "comment. The options below set the most common choices; edit the "
+                                   "file for everything else.")
+    p.add_argument("geometry", nargs="?", help="XYZ file of the whole system")
+    p.add_argument("-o", "--output", default="config.yaml", help="Config file to write (default: config.yaml)")
+    p.add_argument("--force", action="store_true", help="Overwrite an existing config file")
+    p.add_argument("--name", help="Run name (default: the geometry file name)")
+    p.add_argument("--charge", type=int, default=0, help="Total charge")
+    p.add_argument("--fragments", choices=["auto", "ranges", "files"],
+                   help="How to split the system (default: auto for separate molecules, else ranges)")
+    p.add_argument("--ranges", nargs="+", metavar="RANGE",
+                   help='1-based atom indices per fragment, e.g. --ranges "1-56,113-120" "57-112"')
+    p.add_argument("--files", nargs="+", metavar="XYZ", help="Ready-made fragment XYZ files")
+    p.add_argument("--functional", help="TDDFT functional (default: wb97x-d)")
+    p.add_argument("--basis", help="TDDFT basis set (default: 6-31g(d))")
+    p.add_argument("--nstates", type=int, help="Excited states per fragment (default: 10)")
+    p.add_argument("--state", type=int, help="Excited state used for the couplings (default: 1)")
+    p.add_argument("--method", choices=["tddft", "tda"], help="tddft (default) or tda")
+    p.add_argument("--no-opt", action="store_true", help="Skip the geometry optimization")
+    p.add_argument("--system", action="store_true",
+                   help="Also compute the whole system and its exciton Hamiltonian (one full node)")
+    p.add_argument("--account", help="Slurm allocation")
+    p.set_defaults(func=_cmd_init)
 
     # --- run (automated QM pipeline) ---
     p = sub.add_parser("run", help="Automated pipeline: geometry -> TD-DFT -> couplings (needs eecc[qm])")
