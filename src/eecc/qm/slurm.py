@@ -132,7 +132,7 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
 
     # job -> jobs it waits for (only those submitted now; finished stages need no wait)
     waits = {"prep": [], "frag": ["prep"], "analysis": ["frag"], "system": ["prep"],
-             "diabatize": ["system", "frag"]}
+             "diabatize": ["system", "frag", "analysis"]}
     ids: dict = {}
     for key in ("prep", "frag", "analysis", "system", "diabatize"):
         if key in paths:

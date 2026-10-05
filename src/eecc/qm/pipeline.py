@@ -69,11 +69,13 @@ class Pipeline:
         # Frequencies do not change the geometry, so they do not invalidate later stages.
         h = _combine(h, cfg.section_hash("opt", "charge", "spin", ignore=("freq",)))
         if stage == "system":  # whole system with the td method; independent of the fragments
+            if cfg.fragments.mode == "files":  # the input hash covers only the fragment files
+                h = _combine(h, _file_hash(cfg.path(cfg.geometry)))
             return _combine(h, cfg.section_hash("td", ignore=("nstates", "state")),
-                            cfg.section_hash("system", ignore=("include_ct",)))
+                            cfg.section_hash("system", ignore=("include_ct", "enabled")))
         if stage == "diabatize":
             return _combine(self.expected_hash("system"), self.expected_hash("td"),
-                            cfg.section_hash("system"))
+                            cfg.section_hash("system", ignore=("enabled",)))
         h = _combine(h, cfg.section_hash("fragments"))
         if stage == "fragments":
             return h

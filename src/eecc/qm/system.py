@@ -69,8 +69,7 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
     td.gen_vind = logged_gen_vind
     t0 = time.time()
     td.kernel()
-    if not np.all(td.converged):
-        raise RuntimeError(f"system: TDDFT did not converge for all {nstates} states")
+    converged = np.atleast_1d(td.converged).astype(bool)
     log(f"[system] TDDFT {(time.time() - t0) / 60:.1f} min, {progress['vectors']} vectors")
 
     energies = np.asarray(td.e) * HARTREE_TO_EV
@@ -82,11 +81,16 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
                         energies_eV=energies, osc=osc, tdm_au=tdm, x=x, y=y)
     summary = {
         "natoms": len(structure), "nao": int(mol.nao), "scf_energy_Eh": float(mf.e_tot),
-        "states": [{"energy_eV": float(e), "f": float(f), "mu_D": float(np.linalg.norm(m) * AU_TO_DEBYE)}
-                   for e, f, m in zip(energies, osc, tdm)],
+        "states": [{"energy_eV": float(e), "f": float(f), "mu_D": float(np.linalg.norm(m) * AU_TO_DEBYE),
+                    "converged": bool(c)} for e, f, m, c in zip(energies, osc, tdm, converged)],
     }
     with open(os.path.join(workdir, "system_td.json"), "w") as f:
         json.dump(summary, f, indent=2)
+    # The highest Davidson roots are the ones that most often miss the tolerance; keep the
+    # (hours-long) result and report them instead of discarding everything.
+    if not converged.all():
+        log(f"[system] WARNING: TDDFT states {[i + 1 for i in np.flatnonzero(~converged)]} "
+            f"of {nstates} did not converge")
     return summary
 
 
@@ -99,13 +103,23 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     data = np.load(os.path.join(sys_dir, "system_td.npz"))
     mol = build_mol(read_xyz(os.path.join(sys_dir, "system.xyz")), cfg.td.basis, cfg.td.cart,
                     cfg.charge, 0, cfg.resources.memory_mb, verbose=0)
-    res = diabatize_from_pipeline(pipe, mol, data["mo_coeff"], data["mo_occ"], data["x"], data["y"],
-                                  data["energies_eV"], include_ct=cfg.system.include_ct)
-
     names = pipe.fragment_names()
+    n_frag, n_states = len(names), len(data["energies_eV"])
+    include_ct = cfg.system.include_ct
+    notes = []
+    if include_ct and n_frag * n_frag > n_states:  # n LE + n(n-1) CT states
+        include_ct = False
+        notes.append(f"# NOTE: LE states only; LE + CT needs {n_frag * n_frag} system states "
+                     f"(have {n_states}, increase system.nstates)")
+        pipe.log("[diabatize] " + notes[-1][2:])
+    res = diabatize_from_pipeline(pipe, mol, data["mo_coeff"], data["mo_occ"], data["x"], data["y"],
+                                  data["energies_eV"], include_ct=include_ct)
+
     coulomb = {}
     cpath = os.path.join(pipe.stage_dir("couplings"), "couplings.json")
-    if os.path.exists(cpath):
+    if not pipe.is_done("couplings"):  # a stale file would not match these fragment states
+        notes.append("# NOTE: couplings stage not finished; no Coulomb couplings to compare")
+    elif os.path.exists(cpath):
         for p in json.load(open(cpath))["pairs"]:
             coulomb[tuple(p["pair"])] = p["J_cm-1"]
     pairs = []
@@ -123,7 +137,7 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
 
     lines = ["# Exciton Hamiltonian from the whole-system TDDFT (diabatization onto fragment states)",
              "# Adiabatic states (eV): " + ", ".join(f"{e:.4f}" for e in data["energies_eV"]), "",
-             format_hamiltonian(res, EV_TO_CM), ""]
+             *notes, format_hamiltonian(res, EV_TO_CM), ""]
     low = [l for l, c in zip(res.labels, res.completeness) if c < 0.8]
     if low:
         lines.append(f"# WARNING: completeness < 0.8 for {low}; increase system.nstates "

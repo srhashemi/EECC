@@ -541,6 +541,20 @@ def test_system_stage_dependencies_and_hashes(tmp_path):
     assert pipe.expected_hash("system") == h_sys and pipe.expected_hash("diabatize") != h_dia
     pipe.cfg.td.xc = "b3lyp"
     assert pipe.expected_hash("system") != h_sys
+    # system.enabled does not change results, so toggling it keeps finished stages
+    h_sys, h_dia = pipe.expected_hash("system"), pipe.expected_hash("diabatize")
+    pipe.cfg.system.enabled = False
+    assert pipe.expected_hash("system") == h_sys and pipe.expected_hash("diabatize") == h_dia
+
+    # with fragment files the whole-system geometry is a separate input and must be hashed
+    for name in ("a.xyz", "b.xyz"):
+        save_xyz(ETHYLENE, str(tmp_path / name))
+    frag_files = [str(tmp_path / "a.xyz"), str(tmp_path / "b.xyz")]
+    files = Pipeline(_small_config(tmp_path, geo, fragments={"mode": "files", "files": frag_files},
+                                   system={"enabled": True}), log=lambda *a: None)
+    h_sys = files.expected_hash("system")
+    save_xyz(_stacked_dimer(5.0), str(geo))
+    assert files.expected_hash("system") != h_sys
 
 
 def test_slurm_jobs_for_system_stage(tmp_path):
@@ -559,6 +573,27 @@ def test_slurm_jobs_for_system_stage(tmp_path):
         config_from_dict({"fragments": {"mode": "files", "files": ["a.xyz", "b.xyz"]}, "system": {"enabled": True}})
 
 
+def test_slurm_diabatize_waits_for_couplings(tmp_path, monkeypatch):
+    """The diabatization reads couplings.json, so its job must wait for the analysis job."""
+    import subprocess
+    from eecc.qm import slurm
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, system={"enabled": True}, slurm={"account": "p"})
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{100 + len(calls)}\n")
+    monkeypatch.setattr(slurm.subprocess, "run", fake_run)
+    jobs = dict(line.split() for line in slurm.submit(Pipeline(cfg), str(tmp_path / "c.yaml")))
+    dia = next(c for c in calls if c[-1].endswith("diabatize.sh"))
+    deps = set(dia[2].split(":", 1)[1].split(":"))
+    assert {jobs["system"], jobs["frag"], jobs["analysis"]} <= deps
+
+
 def test_pipeline_with_system_stage(tmp_path):
     """End to end: fragments, whole-system TDDFT and the exciton Hamiltonian next to the Coulomb couplings."""
     from eecc.qm.pipeline import Pipeline
@@ -575,3 +610,25 @@ def test_pipeline_with_system_stage(tmp_path):
     assert {"J_total_cm-1", "tresp_cm-1", "tdc_direct_cm-1"} <= set(pair)
     assert "Total coupling (this stage) vs Coulomb" in open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
     assert pipe.is_done("system") and pipe.is_done("diabatize")
+    assert all(s["converged"] for s in json.load(open(os.path.join(pipe.stage_dir("system"), "system_td.json")))["states"])
+
+    # too few system states for LE + CT: fall back to LE only instead of failing after the system run
+    from eecc.qm.diabatize import diabatize_from_pipeline
+    from eecc.qm.pyscf_setup import build_mol
+
+    npz = os.path.join(pipe.stage_dir("system"), "system_td.npz")
+    d = dict(np.load(npz))
+    mol = build_mol(read_xyz(os.path.join(pipe.stage_dir("system"), "system.xyz")), cfg.td.basis, cfg.td.cart,
+                    0, 0, 2000, verbose=0)
+    le = diabatize_from_pipeline(pipe, mol, d["mo_coeff"], d["mo_occ"], d["x"], d["y"], d["energies_eV"],
+                                 include_ct=False)
+    keep = np.sort(np.argsort(-np.sum(le.D ** 2, axis=1))[:3])  # the 3 states that carry the LE states
+    np.savez(npz, **{k: (v[keep] if k in ("energies_eV", "osc", "tdm_au", "x", "y") else v) for k, v in d.items()})
+    pipe.cfg.system.include_ct = True
+    # stale couplings (marker removed, file left behind) must not be listed as the Coulomb couplings
+    os.remove(os.path.join(pipe.stage_dir("couplings"), ".done"))
+    pipe.run_diabatize(force=True)
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    txt = open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
+    assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and "LE states only" in txt
+    assert "tresp_cm-1" not in res["pairs"][0] and "couplings stage not finished" in txt
