@@ -19,6 +19,27 @@ Coupling methods:
 - **TrESP** (Transition ElectroStatic Potential) and **TrMulliken** transition charges
 - **Point-dipole** and **extended-dipole** approximations
 
+## In short
+
+```bash
+pip install -e ".[qm]"
+eecc init pair.xyz           # writes config.yaml: every option, its default and a comment
+eecc run config.yaml         # runs here; add --slurm on a cluster
+```
+
+The couplings of every fragment pair are in `work/05_couplings/couplings.txt`.
+Separate molecules are split automatically; for one covalent molecule, give
+the atoms of each chromophore with `--ranges` (see [Getting started](#getting-started)).
+
+Contents: [Installation](#installation) ·
+[Getting started](#getting-started) ·
+[Automated pipeline](#automated-pipeline-from-geometry-to-couplings) ·
+[Validation](#validation) ·
+[Working from cube or charge files](#working-from-cube-or-charge-files) ·
+[Python API](#python-api) ·
+[Configuration reference](#configuration-reference) ·
+[Citation](#citation)
+
 ## Installation
 
 Requires Python 3.9+ with NumPy and SciPy.
@@ -53,10 +74,9 @@ pip install -e ".[dev]"
 | pytest     | >= 7.0   | Testing          |
 | pyscf, pyscf-dispersion, geomeTRIC, PyYAML | see `pyproject.toml` | `eecc run` |
 
-## Quick start
+## Getting started
 
-The BODIPY dimer of the validation, from its geometry to the couplings
-(install with `pip install -e ".[qm]"`):
+The BODIPY dimer of the validation, from its geometry to the couplings:
 
 ```bash
 cd examples/qm/bodipy_dimer
