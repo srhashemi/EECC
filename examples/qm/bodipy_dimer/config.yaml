@@ -38,10 +38,12 @@ td:                              # excited states of each fragment
   xc: wb97x-d                    # exchange-correlation part of wB97X-D (libxc)
   basis: 6-31g(d)                # Pople bases use Cartesian d functions (cart: auto), as Gaussian
   nstates: 10
-  method: tddft                  # tddft (full, like Gaussian TD) or tda
+  method: tddft                  # tddft (full, like Gaussian TD); tda reorders the BODIPY states
   state: 1                       # excited state used for the couplings
-  grid: [99, 590]
-  density_fit: false
+  grid: [99, 590]                # SCF grid
+  response_grid: [75, 302]       # TDDFT response only (null: same as grid)
+  davidson_tol: 1.0e-4
+  density_fit: false             # no speed-up for the TDDFT step
 
 transition:
   cube:
@@ -57,6 +59,11 @@ couplings:
   dielectric: 1.0
   tdc_pad: 3
 
+system:                          # whole-system TDDFT + exciton Hamiltonian (one full node, ~11 h here)
+  enabled: false
+  nstates: 0                     # 0: four per fragment
+  include_ct: true               # HOMO->LUMO charge-transfer states between fragments
+
 resources:
   threads: 0                     # 0 = OMP_NUM_THREADS / all cores
   memory_mb: 24000
@@ -64,6 +71,7 @@ resources:
 slurm:
   account: null                  # set your allocation, e.g. naiss2025-5-749
   partition: shared
+  physical_cores: true           # --hint=nomultithread: one thread per physical core
   cpus: 32
   mem: 28G
   time_opt: "24:00:00"

@@ -210,7 +210,7 @@ def main() -> None:
     p = sub.add_parser("run", help="Automated pipeline: geometry -> TD-DFT -> couplings (needs eecc[qm])")
     p.add_argument("config", help="Pipeline YAML config file")
     p.add_argument("--stage", default="all",
-                   choices=["all", "opt", "fragments", "td", "transition", "couplings"],
+                   choices=["all", "opt", "fragments", "td", "transition", "couplings", "system", "diabatize"],
                    help="Run only this stage")
     p.add_argument("--fragment", type=int, default=None,
                    help="1-based fragment index (td/transition stages only)")

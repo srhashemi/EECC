@@ -217,8 +217,66 @@ Notes:
   separation. `tdc_boundary: periodic` reproduces the published workflow, whose
   periodic images make distant pairs inaccurate (BODIPY tetramer, 24.7 Å apart:
   −14 cm⁻¹ instead of −29 cm⁻¹).
+- TDDFT speed: the TDDFT step, not the SCF, dominates the cost. The defaults evaluate
+  the XC kernel of the response on a `[75, 302]` grid (`td.response_grid`, SCF on
+  `td.grid`), stop the Davidson solver at `td.davidson_tol: 1e-4`, and run Slurm jobs
+  on physical cores (`slurm.physical_cores`). For a BODIPY fragment (624 basis
+  functions) this cuts the TDDFT from about 5.4 h to 1.5 h on 32 cores with identical
+  S1 energy, oscillator strength and transition density. TDA is faster but moves the
+  bright BODIPY state above a dark one, and density fitting does not speed up the
+  TDDFT step.
 - Only closed-shell systems are supported. Signs of the couplings are arbitrary
   because the phase of each fragment's transition density is arbitrary.
+
+### Whole-system TDDFT and the exciton Hamiltonian
+
+The fragment couplings above are Coulomb couplings. With `system.enabled: true`
+the pipeline also computes the whole system with the same TDDFT settings (stage
+`system`, one node) and diabatizes its states onto the fragment states (stage
+`diabatize`): the transition densities of the fragments' locally excited (LE)
+states and of HOMO→LUMO charge-transfer (CT) states between fragments are
+projected into the orbitals of the whole system and fitted as combinations of
+its states. The result, `<workdir>/07_diabatize/diabatic.txt`, is the exciton
+Hamiltonian: site and CT energies, and *total* couplings, which include
+exchange, overlap, polarization and CT mixing, listed next to the Coulomb
+couplings. A completeness below about 0.8 means `system.nstates` (default: four
+per fragment) is too small to describe that state. LE + CT needs n² states for
+n fragments (the default covers up to four); with fewer, the stage fits the LE
+states only and says so in `diabatic.txt`.
+
+```yaml
+system:
+  enabled: true
+  include_ct: true
+slurm:
+  system_partition: main     # whole node; use `long` for trimers and larger
+  time_system: "24:00:00"    # enough for a dimer; the tetramer took 47 h
+```
+
+On Dardel (128 cores) the BODIPY dimer (1244 basis functions) took 11 h, the
+trimer (1864) 20 h and the tetramer (2484) 47 h.
+
+| System | Whole-system result | Total coupling | Coulomb (TDC direct) |
+|---|---|---|---|
+| BODIPY dimer | S1 2.8118 eV (bright), S2 3.0736 eV; Davydov J = −1056 cm⁻¹ (published Gaussian: −1057) | 1050 cm⁻¹ | 906 cm⁻¹ |
+| PDI dimer, 3.5 Å cofacial | S1 2.065 eV: 63 % LE + 37 % CT; CT 0.22 eV above LE; LE–CT coupling about 2750 cm⁻¹ | 1275 cm⁻¹ | 1160 cm⁻¹ |
+| BODIPY trimer | S1 2.6682 eV (f 2.26), S2 2.9603 eV (f 0.03); site energies 2.944 / 2.839 / 2.938 eV | 1078, 1248; 192 cm⁻¹ | 903, 887; 104 cm⁻¹ |
+| BODIPY tetramer | S1 2.6093 eV (f 3.22), S2 2.8432 eV (f 0.04); end sites 2.94 eV, inner sites 2.84 eV | 1081, 1122, 1247; 220, 212; 68 cm⁻¹ | 908, 907, 885; 104, 105; 30 cm⁻¹ |
+
+For the covalent BODIPY dimer the total coupling is 10–15 % larger than the
+Coulomb coupling and reproduces the Davydov splitting. In the π-stacked PDI
+dimer the direct LE–LE coupling is close to the Coulomb value, but CT mixing
+dominates the low-energy states, which no Coulomb coupling can describe.
+
+For the trimer and tetramer the couplings are listed along the chain: nearest
+neighbours, then second neighbours, then (tetramer) the two ends. Only LE states
+were fitted, since 6 and 8 states cannot span the CT states (completeness
+0.87–0.92). The nearest-neighbour total couplings are 20–40 % larger than the
+Coulomb couplings, and the more distant ones about twice as large, although
+these are small. The inner sites lie 0.1 eV below the end sites. The 4 × 4
+tetramer Hamiltonian reproduces the four lowest whole-system states within
+4 meV. With the isolated-fragment site energies, Coulomb couplings place the
+trimer S1 0.2 eV too high, so the site energies matter more than the couplings.
 
 ### Validation against the published BODIPY oligomers
 
@@ -305,6 +363,8 @@ src/eecc/
     ├── excited.py        # TDDFT and transition density matrices
     ├── transition.py     # Cube files, transition Mulliken and TrESP charges
     ├── couplings.py      # Pairwise couplings via the EECC methods
+    ├── system.py         # Whole-system TDDFT and diabatization stages
+    ├── diabatize.py      # Projection diabatization onto fragment LE/CT states
     ├── pipeline.py       # Restartable stage runner
     └── slurm.py          # Slurm job submission
 ```

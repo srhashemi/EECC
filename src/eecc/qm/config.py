@@ -66,8 +66,13 @@ class TDConfig:
     method: str = "tddft"  # 'tddft' (full, as Gaussian TD) or 'tda'
     state: int = 1  # 1-based excited state used for the couplings
     grid: List[int] = field(default_factory=lambda: [99, 590])
+    # Grid for the TDDFT response (XC kernel) only; the SCF uses 'grid'. On the BODIPY
+    # fragment [75, 302] reproduces S1, f and the transition density of [99, 590] to six
+    # digits at ~1.6x the speed. null: use 'grid'.
+    response_grid: Optional[List[int]] = field(default_factory=lambda: [75, 302])
     density_fit: bool = False
-    conv_tol: float = 1e-9
+    conv_tol: float = 1e-9  # SCF
+    davidson_tol: float = 1e-4  # TDDFT residual; 1e-5 gives the same states ~1.3x slower
 
 
 @dataclass
@@ -109,6 +114,16 @@ class CouplingsConfig:
 
 
 @dataclass
+class SystemConfig:
+    # Whole-system TDDFT with the 'td' settings, diabatized onto the fragment states:
+    # total couplings (exchange, overlap, polarization, CT mixing) next to the Coulomb ones.
+    enabled: bool = False
+    nstates: int = 0  # 0: four per fragment
+    include_ct: bool = True  # HOMO->LUMO charge-transfer states between every fragment pair
+    memory_mb: Optional[int] = None
+
+
+@dataclass
 class ResourcesConfig:
     threads: int = 0  # 0: take OMP_NUM_THREADS / all available
     memory_mb: int = 16000
@@ -119,6 +134,9 @@ class ResourcesConfig:
 class SlurmConfig:
     account: Optional[str] = None
     partition: str = "shared"
+    # One thread per physical core (--hint=nomultithread). Hyperthreads add little to
+    # PySCF: on Dardel the same job ran ~2x faster per step with 32 physical cores.
+    physical_cores: bool = True
     # CPUs/memory for optimization and fragment TDDFT jobs. On partitions that
     # allocate cores by memory (e.g. Dardel 'shared', ~0.87 GB per core), keep
     # mem <= cpus x that ratio to avoid being billed for extra cores.
@@ -131,6 +149,11 @@ class SlurmConfig:
     opt_partition: Optional[str] = None
     opt_cpus: Optional[int] = None
     opt_mem: Optional[str] = None
+    # Whole-system TDDFT job (system.enabled): one node, all cores.
+    system_partition: str = "main"
+    system_cpus: int = 128
+    system_mem: str = "0"
+    time_system: str = "24:00:00"
     time_opt: str = "24:00:00"
     time_td: str = "12:00:00"  # one fragment TDDFT; ~65-atom chromophores need 5-7 h on 32 cores
     time_analysis: str = "02:00:00"
@@ -149,6 +172,7 @@ class PipelineConfig:
     td: TDConfig = field(default_factory=TDConfig)
     transition: TransitionConfig = field(default_factory=TransitionConfig)
     couplings: CouplingsConfig = field(default_factory=CouplingsConfig)
+    system: SystemConfig = field(default_factory=SystemConfig)
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
     # Directory of the config file; relative paths are resolved against it.
@@ -205,6 +229,7 @@ HASH_IGNORED = {"memory_mb", "maxsteps"}
 # {section: {field: old default}}.
 CHANGED_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "couplings": {"cap_charges": "keep", "tdc_boundary": "periodic"},
+    "td": {"response_grid": None, "davidson_tol": 1e-5},
 }
 
 
@@ -291,6 +316,11 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError("opt.thresholds must be positive")
     if cfg.td.method not in VALID_TD_METHODS:
         raise ValueError(f"td.method must be one of {VALID_TD_METHODS}")
+    rg = cfg.td.response_grid
+    if rg is not None and (len(rg) != 2 or min(rg) <= 0):
+        raise ValueError("td.response_grid must be [radial, angular] or null")
+    if cfg.td.davidson_tol <= 0:
+        raise ValueError("td.davidson_tol must be positive")
     if not 1 <= cfg.td.state <= cfg.td.nstates:
         raise ValueError("td.state must be between 1 and td.nstates")
     bad = set(cfg.couplings.methods) - set(VALID_METHODS)
@@ -298,6 +328,10 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError(f"Unknown coupling method(s) {sorted(bad)}; allowed: {VALID_METHODS}")
     if cfg.couplings.cap_charges not in ("merge", "drop", "keep"):
         raise ValueError("couplings.cap_charges must be 'merge', 'drop' or 'keep'")
+    if cfg.system.enabled and not cfg.geometry:
+        raise ValueError("system.enabled needs 'geometry' (the whole system)")
+    if cfg.system.nstates < 0:
+        raise ValueError("system.nstates must be >= 0")
     if cfg.couplings.tdc_boundary not in ("free", "periodic"):
         raise ValueError("couplings.tdc_boundary must be 'free' or 'periodic'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:

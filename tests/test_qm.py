@@ -354,9 +354,11 @@ def test_changed_defaults_invalidate_old_results():
     explicit_old = {**base, "couplings": {"cap_charges": "keep", "tdc_boundary": "periodic"}}
     assert config_from_dict(explicit_old).section_hash("couplings") == stored_before_change("couplings", {})
     # 6-311G used Cartesian d functions under the original rule, spherical ones now
-    tz = config_from_dict({**base, "td": {"basis": "6-311g(d,p)"}})
+    # (other TD settings pinned to their old defaults to isolate the basis rule)
+    old_td = {"response_grid": None, "davidson_tol": 1e-5}
+    tz = config_from_dict({**base, "td": {"basis": "6-311g(d,p)", **old_td}})
     assert tz.section_hash("td") != stored_before_change("td", {"basis": "6-311g(d,p)"})
-    pople = config_from_dict({**base, "td": {"basis": "6-31g(d)"}})
+    pople = config_from_dict({**base, "td": {"basis": "6-31g(d)", **old_td}})
     assert pople.section_hash("td") == stored_before_change("td", {})
 
 
@@ -446,3 +448,187 @@ def test_slurm_scripts_tolerate_unset_variables_in_setup(tmp_path):
     for path in submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True):
         text = open(path).read()
         assert "set -eo pipefail" in text and "set -u" not in text and "-euo" not in text
+
+
+def test_fast_tddft_settings_are_new_defaults():
+    """Response grid, Davidson tolerance and physical cores; TD results from before stay distinguishable."""
+    import hashlib
+
+    base = {"geometry": "x.xyz", "fragments": {"mode": "auto"}}
+    legacy = hashlib.sha256(json.dumps({"td": {}}, sort_keys=True).encode()).hexdigest()[:16]
+    assert config_from_dict(base).section_hash("td") != legacy
+    old = {**base, "td": {"response_grid": None, "davidson_tol": 1e-5}}
+    assert config_from_dict(old).section_hash("td") == legacy
+    with pytest.raises(ValueError, match="response_grid"):
+        config_from_dict({**base, "td": {"response_grid": [75]}})
+
+
+def test_slurm_physical_cores_hint(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.slurm import submit
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    on = submit(Pipeline(_small_config(tmp_path, geo, slurm={"account": "p"})), str(tmp_path / "c.yaml"), dry_run=True)
+    assert all("#SBATCH --hint=nomultithread" in open(p).read() for p in on)
+    cfg = _small_config(tmp_path, geo, slurm={"account": "p", "physical_cores": False})
+    off = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
+    assert not any("nomultithread" in open(p).read() for p in off)
+
+
+def test_diabatization_recovers_fragment_states_and_davydov_coupling(tmp_path):
+    """Stacked ethylene dimer: LE diabats match the fragment S1 and the Davydov splitting."""
+    from eecc.qm.diabatize import diabatize_from_pipeline
+    from eecc.qm.excited import HARTREE_TO_EV
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.pyscf_setup import build_mol, build_rks
+
+    dimer = _stacked_dimer(4.0)
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(dimer, str(geo))
+    cfg = _small_config(tmp_path, geo, td={"nstates": 3}, couplings={"methods": ["tresp"]})
+    pipe = Pipeline(cfg, log=lambda *a: None)
+    pipe.run()
+
+    mol = build_mol(dimer, "sto-3g", None, 0, 0, 2000, verbose=0)
+    mf = build_rks(mol, cfg.td.xc, cfg.td.grid, False, 1e-9)
+    mf.kernel()
+    mf.grids.atom_grid = tuple(cfg.td.response_grid); mf.grids.build()
+    td = mf.TDDFT(); td.nstates = 6; td.conv_tol = 1e-6; td.kernel()
+    E = np.asarray(td.e) * HARTREE_TO_EV
+    x = np.array([xy[0] for xy in td.xy]); y = np.array([xy[1] for xy in td.xy])
+
+    res = diabatize_from_pipeline(pipe, mol, mf.mo_coeff, mf.mo_occ, x, y, E, include_ct=False)
+    e_frag = json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json")))["selected"]["energy_eV"]
+    assert np.all(res.completeness > 0.9)
+    assert abs(res.H_eV[0, 0] - res.H_eV[1, 1]) < 1e-3  # symmetric dimer
+    assert abs(res.H_eV[0, 0] - e_frag) < 0.05
+    # the LE block reproduces the energies of the two adiabatic states carrying the LE character
+    # (the Davydov pair), so its coupling is half their splitting
+    pair = np.argsort(-np.sum(res.D ** 2, axis=1))[:2]
+    assert np.allclose(np.linalg.eigvalsh(res.H_eV), np.sort(E[pair]), atol=0.02)
+    res_ct = diabatize_from_pipeline(pipe, mol, mf.mo_coeff, mf.mo_occ, x, y, E, include_ct=True)
+    assert res_ct.H_eV.shape == (4, 4) and res_ct.labels[2] == "CT(frag1->frag2)"
+
+
+def test_system_stage_dependencies_and_hashes(tmp_path):
+    """The whole-system run depends only on the geometry and TD method, not on the fragments."""
+    from eecc.qm.pipeline import STAGES, Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    pipe = Pipeline(_small_config(tmp_path, geo, system={"enabled": True}), log=lambda *a: None)
+    def stamp_all():
+        for st in STAGES:
+            for frag in (["frag1", "frag2"] if st in ("td", "transition") else [None]):
+                os.makedirs(pipe.stage_dir(st, frag), exist_ok=True)
+                open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w").write(pipe.expected_hash(st) + "\n")
+    stamp_all()
+    pipe._mark_done("couplings")
+    assert pipe.is_done("system") and pipe.is_done("diabatize")
+    pipe._mark_done("td", "frag1")
+    assert pipe.is_done("system") and not pipe.is_done("diabatize")
+    stamp_all()
+    pipe._mark_done("fragments")
+    assert pipe.is_done("system") and not pipe.is_done("diabatize")
+    stamp_all()
+    pipe._mark_done("opt")
+    assert not pipe.is_done("system")
+
+    h_sys, h_dia = pipe.expected_hash("system"), pipe.expected_hash("diabatize")
+    pipe.cfg.td.nstates = 4  # fragment states only
+    pipe.cfg.system.include_ct = False  # diabatization only
+    assert pipe.expected_hash("system") == h_sys and pipe.expected_hash("diabatize") != h_dia
+    pipe.cfg.td.xc = "b3lyp"
+    assert pipe.expected_hash("system") != h_sys
+    # system.enabled does not change results, so toggling it keeps finished stages
+    h_sys, h_dia = pipe.expected_hash("system"), pipe.expected_hash("diabatize")
+    pipe.cfg.system.enabled = False
+    assert pipe.expected_hash("system") == h_sys and pipe.expected_hash("diabatize") == h_dia
+
+    # with fragment files the whole-system geometry is a separate input and must be hashed
+    for name in ("a.xyz", "b.xyz"):
+        save_xyz(ETHYLENE, str(tmp_path / name))
+    frag_files = [str(tmp_path / "a.xyz"), str(tmp_path / "b.xyz")]
+    files = Pipeline(_small_config(tmp_path, geo, fragments={"mode": "files", "files": frag_files},
+                                   system={"enabled": True}), log=lambda *a: None)
+    h_sys = files.expected_hash("system")
+    save_xyz(_stacked_dimer(5.0), str(geo))
+    assert files.expected_hash("system") != h_sys
+
+
+def test_slurm_jobs_for_system_stage(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+    from eecc.qm.slurm import submit
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, system={"enabled": True}, slurm={"account": "p"})
+    scripts = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
+    assert [os.path.basename(p) for p in scripts] == ["prep.sh", "frag.sh", "analysis.sh", "system.sh", "diabatize.sh"]
+    system = open(scripts[3]).read()
+    assert "#SBATCH -p main" in system and "#SBATCH -c 128" in system and "--stage system" in system
+    assert "--stage diabatize" in open(scripts[4]).read()
+    with pytest.raises(ValueError, match="system.enabled"):
+        config_from_dict({"fragments": {"mode": "files", "files": ["a.xyz", "b.xyz"]}, "system": {"enabled": True}})
+
+
+def test_slurm_diabatize_waits_for_couplings(tmp_path, monkeypatch):
+    """The diabatization reads couplings.json, so its job must wait for the analysis job."""
+    import subprocess
+    from eecc.qm import slurm
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, system={"enabled": True}, slurm={"account": "p"})
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{100 + len(calls)}\n")
+    monkeypatch.setattr(slurm.subprocess, "run", fake_run)
+    jobs = dict(line.split() for line in slurm.submit(Pipeline(cfg), str(tmp_path / "c.yaml")))
+    dia = next(c for c in calls if c[-1].endswith("diabatize.sh"))
+    deps = set(dia[2].split(":", 1)[1].split(":"))
+    assert {jobs["system"], jobs["frag"], jobs["analysis"]} <= deps
+
+
+def test_pipeline_with_system_stage(tmp_path):
+    """End to end: fragments, whole-system TDDFT and the exciton Hamiltonian next to the Coulomb couplings."""
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(4.0), str(geo))
+    cfg = _small_config(tmp_path, geo, td={"nstates": 3}, couplings={"methods": ["tresp", "tdc_direct"]},
+                        system={"enabled": True, "nstates": 6, "include_ct": False})
+    pipe = Pipeline(cfg, log=lambda *a: None)
+    pipe.run()
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and min(res["completeness"]) > 0.9
+    pair = res["pairs"][0]
+    assert {"J_total_cm-1", "tresp_cm-1", "tdc_direct_cm-1"} <= set(pair)
+    assert "Total coupling (this stage) vs Coulomb" in open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
+    assert pipe.is_done("system") and pipe.is_done("diabatize")
+    assert all(s["converged"] for s in json.load(open(os.path.join(pipe.stage_dir("system"), "system_td.json")))["states"])
+
+    # too few system states for LE + CT: fall back to LE only instead of failing after the system run
+    from eecc.qm.diabatize import diabatize_from_pipeline
+    from eecc.qm.pyscf_setup import build_mol
+
+    npz = os.path.join(pipe.stage_dir("system"), "system_td.npz")
+    d = dict(np.load(npz))
+    mol = build_mol(read_xyz(os.path.join(pipe.stage_dir("system"), "system.xyz")), cfg.td.basis, cfg.td.cart,
+                    0, 0, 2000, verbose=0)
+    le = diabatize_from_pipeline(pipe, mol, d["mo_coeff"], d["mo_occ"], d["x"], d["y"], d["energies_eV"],
+                                 include_ct=False)
+    keep = np.sort(np.argsort(-np.sum(le.D ** 2, axis=1))[:3])  # the 3 states that carry the LE states
+    np.savez(npz, **{k: (v[keep] if k in ("energies_eV", "osc", "tdm_au", "x", "y") else v) for k, v in d.items()})
+    pipe.cfg.system.include_ct = True
+    # stale couplings (marker removed, file left behind) must not be listed as the Coulomb couplings
+    os.remove(os.path.join(pipe.stage_dir("couplings"), ".done"))
+    pipe.run_diabatize(force=True)
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    txt = open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
+    assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and "LE states only" in txt
+    assert "tresp_cm-1" not in res["pairs"][0] and "couplings stage not finished" in txt
