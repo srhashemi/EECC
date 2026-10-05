@@ -319,16 +319,18 @@ def _check_type(key: str, value: Any, default: Any, optional: bool) -> Any:
             except ValueError:
                 pass
         ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+    elif isinstance(default, str) and isinstance(value, int) and not isinstance(value, bool):
+        if ":" in default:  # a Slurm time: 720 (minutes) and an unquoted 12:00:00 (= 43200) look alike
+            raise ValueError(f"'{key}' must be quoted, got {value!r}: write \"{default}\", or \"720\" for "
+                             "minutes (YAML reads an unquoted 12:00:00 as 43200 seconds)")
+        return str(value)  # e.g. a Slurm memory of 0 (whole node)
     else:
         ok = isinstance(value, type(default))
     if ok:
         return value
     kind = {bool: "true or false", int: "an integer", float: "a number", str: "a string",
             list: "a list", dict: "a mapping"}.get(type(default), type(default).__name__)
-    hint = ""
-    if isinstance(default, str) and isinstance(value, int) and ":" in default:
-        hint = f' (quote times: "{default}"; unquoted 12:00:00 is read as a number of seconds)'
-    raise ValueError(f"'{key}' must be {kind}, got {value!r}{hint}")
+    raise ValueError(f"'{key}' must be {kind}, got {value!r}")
 
 
 def validate(cfg: PipelineConfig) -> None:
@@ -395,27 +397,32 @@ def check_names(cfg: PipelineConfig) -> None:
             dft.libxc.parse_xc(resolve_xc(sec.xc))
         except (KeyError, ValueError):
             problems.append(f"{name}.xc: unknown functional '{sec.xc}'")
-        try:
-            gto.basis.load(sec.basis, "H")
-        except KeyError:  # PySCF has no basis of this name at all
+        status = {el: _basis_status(sec.basis, el) for el in elements or ["H"]}
+        if "unknown" in status.values():
             problems.append(f"{name}.basis: unknown basis set '{sec.basis}'")
             continue
-        except gto.basis.BasisNotFoundError:  # exists, but not for H; the element check reports it
-            pass
-        missing = [el for el in elements if not _has_basis(sec.basis, el)]
+        missing = [el for el, st in status.items() if st == "missing"]
         if missing:
             problems.append(f"{name}.basis: '{sec.basis}' has no functions for {', '.join(missing)}")
     if problems:
         raise ValueError("; ".join(problems))
 
 
-def _has_basis(basis: str, element: str) -> bool:
+def _basis_status(basis: str, element: str) -> str:
+    """'ok', 'missing' (basis exists, not for this element) or 'unknown', as PySCF builds the atom.
+
+    Builds a one-atom molecule like the pipeline does, so prefixed names such as
+    unc-def2-svp and basis files are judged exactly as in the calculation.
+    """
     from pyscf import gto
 
     try:
-        return bool(gto.basis.load(basis, element))
-    except (KeyError, gto.basis.BasisNotFoundError):
-        return False
+        gto.Mole(atom=f"{element} 0 0 0", basis=basis, spin=gto.charge(element) % 2, verbose=0).build()
+        return "ok"
+    except KeyError:
+        return "unknown"
+    except gto.basis.BasisNotFoundError as exc:
+        return "missing" if "not found for" in str(exc) else "unknown"
 
 
 def config_from_dict(data: Dict[str, Any], base_dir: str = ".") -> PipelineConfig:

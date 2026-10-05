@@ -77,8 +77,11 @@ def test_config_paths_relative_to_file(tmp_path):
 def test_config_errors_are_explained():
     with pytest.raises(ValueError, match="did you mean 'basis'"):
         config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "td": {"basis_set": "sto-3g"}})
-    with pytest.raises(ValueError, match="quote times"):  # YAML reads unquoted 12:00:00 as 43200
+    with pytest.raises(ValueError, match="must be quoted"):  # YAML reads unquoted 12:00:00 as 43200
         config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "slurm": {"time_td": 43200}})
+    cfg = config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"},
+                            "slurm": {"system_mem": 0, "mem": 28000, "time_td": "720"}})
+    assert (cfg.slurm.system_mem, cfg.slurm.mem, cfg.slurm.time_td) == ("0", "28000", "720")
     with pytest.raises(ValueError, match="'td.nstates' must be an integer"):
         config_from_dict({"geometry": "x.xyz", "fragments": {"mode": "auto"}, "td": {"nstates": "ten"}})
     with pytest.raises(ValueError, match="'opt.enabled' must be true or false"):
@@ -102,6 +105,9 @@ def test_check_names(tmp_path):
         check_names(config_from_dict({**base, "td": {"basis": "6-31g(d)"}}))
     with pytest.raises(ValueError, match="unknown functional 'b3lpy'.*unknown basis set '6-31gg'"):
         check_names(config_from_dict({**base, "td": {"basis": "6-31gg", "xc": "b3lpy"}}))
+    check_names(config_from_dict({**base, "td": {"basis": "unc-def2-svp"}}))  # prefixed names, as PySCF
+    with pytest.raises(ValueError, match="unknown basis set 'nofile.nw'"):
+        check_names(config_from_dict({**base, "td": {"basis": "nofile.nw"}}))
 
 
 def test_options_are_documented_and_template_roundtrips(tmp_path):
@@ -152,6 +158,9 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit, match="unknown functional"):
         init("pair.xyz", "-o", "bad.yaml", "--functional", "b3lpy")
     assert not os.path.exists(tmp_path / "bad.yaml")
+    (tmp_path / "broken.xyz").write_text("not an xyz file\n")
+    with pytest.raises(SystemExit, match="cannot read broken.xyz"):
+        init("broken.xyz", "-o", "bad.yaml")
 
 
 # ============================================================

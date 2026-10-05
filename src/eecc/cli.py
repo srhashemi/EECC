@@ -130,7 +130,10 @@ def _cmd_init(args):
     notes = {}
     mode = args.fragments or ("files" if args.files else "ranges" if args.ranges else None)
     if mode is None:  # separate molecules -> auto; one covalent system -> the user gives ranges
-        s = read_xyz(args.geometry)
+        try:
+            s = read_xyz(args.geometry)
+        except (ValueError, IndexError) as exc:
+            sys.exit(f"error: cannot read {args.geometry}: {exc}")
         n_mol = len(connected_components(len(s), bonds(s)))
         mode = "auto" if n_mol > 1 else "ranges"
         print(f"{args.geometry}: {len(s)} atoms, {n_mol} separate molecule(s) -> fragments.mode: {mode}")
