@@ -134,24 +134,24 @@ class ResourcesConfig:
 @dataclass
 class SlurmConfig:
     account: Optional[str] = None
-    partition: str = "shared"
+    partition: Optional[str] = None  # null: the cluster's default partition
     # One thread per physical core (--hint=nomultithread). Hyperthreads add little to
-    # PySCF: on Dardel the same job ran ~2x faster per step with 32 physical cores.
+    # PySCF: on 32 physical cores (AMD EPYC 7742) the same job ran ~2x faster per step.
     physical_cores: bool = True
     # CPUs/memory for optimization and fragment TDDFT jobs. On partitions that
-    # allocate cores by memory (e.g. Dardel 'shared', ~0.87 GB per core), keep
-    # mem <= cpus x that ratio to avoid being billed for extra cores.
+    # allocate cores by memory, keep mem <= cpus x the memory per core to avoid
+    # being billed for extra cores.
     cpus: int = 32
     mem: str = "28G"
     analysis_cpus: int = 8
     analysis_mem: str = "16G"
     # Optional overrides for the optimization job, which needs far more memory
-    # than the fragment jobs (e.g. a whole node: opt_partition: main, opt_mem: "0").
+    # than the fragment jobs (e.g. a whole node: opt_cpus: 128, opt_mem: "0").
     opt_partition: Optional[str] = None
     opt_cpus: Optional[int] = None
     opt_mem: Optional[str] = None
     # Whole-system TDDFT job (system.enabled): one node, all cores.
-    system_partition: str = "main"
+    system_partition: Optional[str] = None  # null: slurm.partition
     system_cpus: int = 128
     system_mem: str = "0"
     time_system: str = "24:00:00"

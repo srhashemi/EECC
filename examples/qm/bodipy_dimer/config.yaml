@@ -59,7 +59,7 @@ couplings:
   dielectric: 1.0
   tdc_pad: 3
 
-system:                          # whole-system TDDFT + exciton Hamiltonian (one full node, ~11 h here)
+system:                          # whole-system TDDFT + exciton Hamiltonian (one 128-core node, ~11 h)
   enabled: false
   nstates: 0                     # 0: four per fragment
   include_ct: true               # HOMO->LUMO charge-transfer states between fragments
@@ -69,12 +69,12 @@ resources:
   memory_mb: 24000
 
 slurm:
-  account: null                  # set your allocation, e.g. naiss2025-5-749
-  partition: shared
+  account: null                  # set your allocation, e.g. my-project-123
+  partition: null                # null: the cluster's default partition
   physical_cores: true           # --hint=nomultithread: one thread per physical core
   cpus: 32
   mem: 28G
   time_opt: "24:00:00"
   time_td: "10:00:00"
   time_analysis: "02:00:00"
-  setup: []                      # e.g. ["module load cray-python", "source /path/to/venv/bin/activate"]
+  setup: []                      # e.g. ["module load python", "source /path/to/venv/bin/activate"]
