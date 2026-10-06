@@ -96,7 +96,7 @@ choices can be set directly:
 ```bash
 eecc init pair.xyz                        # two separate molecules: fragments found automatically
 eecc init dimer.xyz --ranges ... --functional cam-b3lyp --basis def2-svp --nstates 6 \
-          --no-opt --account naiss2025-5-749
+          --no-opt --account my-project-123
 eecc init --help                          # all choices (fragment files, TDA, state, whole system, ...)
 ```
 
@@ -194,17 +194,23 @@ system:
   enabled: true
   include_ct: true
 slurm:
-  system_partition: main     # whole node; use `long` for trimers and larger
+  system_partition: <name>   # a partition with whole nodes and long enough time limits
   time_system: "24:00:00"    # enough for a dimer; the tetramer took 47 h
 ```
 
-On Dardel (128 cores) the BODIPY dimer (1244 basis functions) took 11 h, the
-trimer (1864) 20 h and the tetramer (2484) 47 h.
+On one 128-core node (see [Hardware](#hardware)) the BODIPY dimer (1244 basis
+functions) took 11 h, the trimer (1864) 20 h and the tetramer (2484) 47 h.
 
 The results for the BODIPY dimer, trimer and tetramer and a PDI dimer are under
 [Whole-system results](#whole-system-results).
 
 ## Validation
+
+### Hardware
+
+All timings in this README were measured on CPU compute nodes with two 64-core
+AMD EPYC 7742 processors (128 cores, 256 GB memory) under Slurm, one thread per
+physical core: fragment jobs on 32 cores, whole-system jobs on a full node.
 
 ### Fragment couplings against the published BODIPY oligomers
 
@@ -518,24 +524,24 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
 | `resources.memory_mb` | `16000` | PySCF memory (MB) |
 | `resources.tmpdir` | `null` | PySCF scratch directory; null: default |
-| `slurm.account` | `null` | allocation (sbatch -A), e.g. naiss2025-5-749 |
-| `slurm.partition` | `shared` | partition of the optimization, fragment and analysis jobs |
+| `slurm.account` | `null` | allocation (sbatch -A), e.g. my-project-123 |
+| `slurm.partition` | `null` | partition of the optimization, fragment and analysis jobs; null: the cluster's default |
 | `slurm.physical_cores` | `true` | one thread per physical core (--hint=nomultithread; about 2× faster) |
 | `slurm.cpus` | `32` | CPUs per optimization or fragment job |
-| `slurm.mem` | `28G` | memory per optimization or fragment job; on Dardel shared keep ≤ cpus × 0.87 GB |
+| `slurm.mem` | `28G` | memory per optimization or fragment job; where cores are allocated by memory, keep ≤ cpus × memory per core |
 | `slurm.analysis_cpus` | `8` | CPUs of the prep, analysis and diabatize jobs |
 | `slurm.analysis_mem` | `16G` | memory of the prep, analysis and diabatize jobs |
 | `slurm.opt_partition` | `null` | partition of the optimization job; null: slurm.partition |
 | `slurm.opt_cpus` | `null` | CPUs of the optimization job; null: slurm.cpus |
 | `slurm.opt_mem` | `null` | memory of the optimization job ("0": whole node); null: slurm.mem |
-| `slurm.system_partition` | `main` | partition of the whole-system job; use long for trimers and larger |
+| `slurm.system_partition` | `null` | partition of the whole-system job (one full node; trimers and larger need more than 24 h); null: slurm.partition |
 | `slurm.system_cpus` | `128` | CPUs of the whole-system job |
 | `slurm.system_mem` | `'0'` | memory of the whole-system job ("0": whole node) |
 | `slurm.time_system` | `'24:00:00'` | time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h) |
 | `slurm.time_opt` | `'24:00:00'` | time limit of the optimization job |
 | `slurm.time_td` | `'12:00:00'` | time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores) |
 | `slurm.time_analysis` | `'02:00:00'` | time limit of the analysis and diabatize jobs |
-| `slurm.setup` | `[]` | shell lines run before eecc, e.g. ["module load cray-python", "source venv/bin/activate"] |
+| `slurm.setup` | `[]` | shell lines run before eecc, e.g. ["module load python", "source venv/bin/activate"] |
 <!-- options:end -->
 
 ## Package Structure

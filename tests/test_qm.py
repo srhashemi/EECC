@@ -320,7 +320,7 @@ def test_slurm_opt_job_overrides(tmp_path):
     geo = tmp_path / "dimer.xyz"
     save_xyz(_stacked_dimer(), str(geo))
     cfg = _small_config(tmp_path, geo, opt={"enabled": True},
-                        slurm={"account": "p", "opt_partition": "main", "opt_cpus": 128,
+                        slurm={"account": "p", "partition": "shared", "opt_partition": "main", "opt_cpus": 128,
                                "opt_mem": "0"})
     prep, frag, _ = (open(p).read() for p in submit(Pipeline(cfg), str(tmp_path / "c.yaml"),
                                                     dry_run=True))
@@ -656,7 +656,7 @@ def test_slurm_jobs_for_system_stage(tmp_path):
     scripts = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
     assert [os.path.basename(p) for p in scripts] == ["prep.sh", "frag.sh", "analysis.sh", "system.sh", "diabatize.sh"]
     system = open(scripts[3]).read()
-    assert "#SBATCH -p main" in system and "#SBATCH -c 128" in system and "--stage system" in system
+    assert "#SBATCH -p " not in system and "#SBATCH -c 128" in system and "--stage system" in system
     assert "--stage diabatize" in open(scripts[4]).read()
     with pytest.raises(ValueError, match="system.enabled"):
         config_from_dict({"fragments": {"mode": "files", "files": ["a.xyz", "b.xyz"]}, "system": {"enabled": True}})

@@ -29,8 +29,9 @@ def _script(pipe: Pipeline, job: str, time: str, commands: List[str],
     lines = ["#!/bin/bash"]
     if s.account:
         lines.append(f"#SBATCH -A {s.account}")
+    if partition or s.partition:
+        lines.append(f"#SBATCH -p {partition or s.partition}")
     lines += [
-        f"#SBATCH -p {partition or s.partition}",
         f"#SBATCH -J {pipe.cfg.name}-{job}",
         "#SBATCH -n 1",
         f"#SBATCH -c {cpus}",
