@@ -186,10 +186,11 @@ Hamiltonian: site and CT energies, and *total* couplings, which include
 exchange, overlap, polarization and CT mixing, listed next to the Coulomb
 couplings. It also lists the transition dipole and oscillator strength of each
 diabatic state, so `diabatic.json` is a complete exciton model, for example for
-spectra. A completeness below about 0.8 means `system.nstates` (default: four
-per fragment) is too small to describe that state. LE + CT needs n² states for
-n fragments (the default covers up to four); with fewer, the stage fits the LE
-states only and says so in `diabatic.txt`.
+spectra. Each fragment state is built as a mixture of the computed whole-system
+states; its *completeness* (0–1) is the fraction of it that this mixture
+reproduces. LE + CT needs n² states for n fragments (the default covers up to
+four); with fewer, the stage fits the LE states only and says so in
+`diabatic.txt`.
 
 ```yaml
 system:
@@ -224,6 +225,14 @@ functions) took 11 h, the trimer (1864) 20 h and the tetramer (2484) 47 h.
 
 The results for the BODIPY dimer, trimer and tetramer and a PDI dimer are under
 [Whole-system results](#whole-system-results).
+
+**How many states?** Below a completeness of 0.8, `diabatic.txt` warns: increase
+`system.nstates` (default: four per fragment). Above 0.8 the result can still be
+off, and completeness can stay near 0.9 even when it is fine, because a capped
+fragment is not exactly part of the whole system. To check a result you rely on,
+run again with about twice as many states in a separate `workdir` and compare
+the couplings in the two `diabatic.txt` files. If they agree, the first run had
+enough states.
 
 ## Validation
 
@@ -288,13 +297,14 @@ dominates the low-energy states, which no Coulomb coupling can describe.
 
 For the trimer and tetramer the couplings are listed along the chain: nearest
 neighbours, then second neighbours, then (tetramer) the two ends. Only LE states
-were fitted, since 6 and 8 states cannot span the CT states (completeness
-0.87–0.92). The nearest-neighbour total couplings are 20–40 % larger than the
-Coulomb couplings, and the more distant ones about twice as large, although
-these are small. The inner sites lie 0.1 eV below the end sites. The 4 × 4
-tetramer Hamiltonian reproduces the four lowest whole-system states within
-4 meV. With the isolated-fragment site energies, Coulomb couplings place the
-trimer S1 0.2 eV too high, so the site energies matter more than the couplings.
+were fitted, since LE + CT would need 9 and 16 states (the LE completeness of
+0.86–0.92 is limited by the capped fragments). The nearest-neighbour total
+couplings are 20–40 % larger than the Coulomb couplings, and the more distant
+ones about twice as large, although these are small. The inner sites lie 0.1 eV
+below the end sites. The 4 × 4 tetramer Hamiltonian reproduces the four lowest
+whole-system states within 4 meV. With the isolated-fragment site energies,
+Coulomb couplings place the trimer S1 0.2 eV too high, so the site energies
+matter more than the couplings.
 
 ## Working from cube or charge files
 
