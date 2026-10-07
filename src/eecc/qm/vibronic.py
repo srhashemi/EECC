@@ -259,7 +259,7 @@ def calc_key(cfg, structure: Structure, charge: int) -> str:
 
     td = cfg.td
     payload = [cfg.section_hash("td", ignore=TD_UNUSED), resolve_xc(td.xc), use_cartesian(td.basis, td.cart),
-               cfg.vibronic.davidson_tol, charge, list(structure.symbols),
+               cfg.vibronic.davidson_tol, cfg.vibronic.response_grid, charge, list(structure.symbols),
                np.round(np.asarray(structure.coords, float), 8).tolist()]
     return hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:16]
 
@@ -300,8 +300,13 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
         g0, g1, e_exc = partial["grad_ground"], partial["grad_excited"], float(partial["excitation_eV"])
         log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV and gradients from {PARTIAL}")
     else:
+        # Both gradients and the response on one grid (by default the SCF grid): the excitation-energy gradient
+        # g(S1) - g(S0) is a difference of large numbers, and mixing grids leaves an error of a few percent.
+        rg = cfg.vibronic.response_grid
+        if rg:
+            mf.grids.atom_grid = tuple(rg)
+            mf.grids.build()
         g0 = mf.nuc_grad_method().kernel()
-        # The SCF grid also for the response: gradients need the response on the grid of the SCF.
         td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
         td.nstates = td_cfg.nstates
         td.conv_tol = cfg.vibronic.davidson_tol
@@ -312,6 +317,9 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
         e_exc = float(td.e[k]) * HARTREE_TO_EV
         log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV; excited-state gradient")
         g1 = td.nuc_grad_method().kernel(state=td_cfg.state)
+        if rg:  # the Hessian on the SCF grid
+            mf.grids.atom_grid = tuple(td_cfg.grid)
+            mf.grids.build()
         if key:
             _save_npz(partial_path, {"calc_key": np.array(key), "grad_ground": np.asarray(g0),
                                      "grad_excited": np.asarray(g1), "excitation_eV": np.array(e_exc)})

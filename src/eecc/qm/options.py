@@ -92,7 +92,10 @@ HELP: Dict[str, str] = {
     "vibronic.temperature": "K; temperature of the width from the low-frequency modes",
     "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled",
     "vibronic.min_frequency": "cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³)",
-    "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (tighter than td.davidson_tol)",
+    "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (1e-4 gives the S of 1e-6)",
+    "vibronic.response_grid": "grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps "
+                              "td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly "
+                              "displaced modes up to ~10 %; null: td.grid",
     "vibronic.eri": "two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) "
                     "or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take "
                     "at most half of resources.memory_mb; not used with td.density_fit",

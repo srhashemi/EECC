@@ -981,6 +981,26 @@ def test_vibronic_resumes_after_a_killed_hessian(tmp_path, monkeypatch):
     assert out["summary"]["S_eff"] == pytest.approx(ref["summary"]["S_eff"], rel=1e-3)
 
 
+def test_vibronic_response_grid(tmp_path):
+    """A coarser grid for the gradients only: the Hessian stays on the SCF grid, S stays close, the key changes."""
+    from eecc.qm import vibronic
+
+    geo = tmp_path / "x.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, td={"basis": "6-31g", "xc": "b3lyp", "method": "tda", "nstates": 3,
+                                           "grid": [75, 302]})
+    fine = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "fine"), "h2co")
+    key_fine = vibronic.calc_key(cfg, FORMALDEHYDE, 0)
+    cfg.vibronic.response_grid = [50, 194]
+    assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) != key_fine
+    coarse = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "coarse"), "h2co")
+    a = np.load(tmp_path / "fine" / "vibronic.npz")
+    b = np.load(tmp_path / "coarse" / "vibronic.npz")
+    assert np.allclose(a["hessian"], b["hessian"], atol=1e-7)  # the Hessian is back on td.grid
+    assert not np.allclose(a["grad_excited"], b["grad_excited"], atol=1e-10)  # the gradients did use the other grid
+    assert coarse["summary"]["S_eff"] == pytest.approx(fine["summary"]["S_eff"], rel=0.02)
+
+
 def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     """vibronic stage per fragment, its parameters in diabatic.json, and cheap reruns of the summary."""
     from eecc.qm import vibronic
