@@ -149,3 +149,31 @@ def test_cube_file_routes_default_to_free_boundary():
 
     for f in (tdc_coupling_fft, tdc_coupling_fft_simple, run_tdc, run_one_dimer_tdc):
         assert inspect.signature(f).parameters["boundary"].default == "free", f.__name__
+
+
+def test_one_dimer_free_coupling_does_not_depend_on_the_box():
+    """Fragment neutralization within its own voxels: no background charge, so the box size does not matter."""
+    from eecc.coupling.tdc_fft import tdc_coupling_fft_simple
+    from eecc.workflows.tdc_one_dimer import neutralize_fragment
+
+    values = []
+    for margin in (0.0, 2.0, 4.0):  # extra grid beyond the two densities (Å)
+        n = int(round((16.0 + 2 * margin) / 0.4)) + 1
+        A = _px_cube([0.0, 0.0, 0.0], 0.4, n, grid_shift=4.0)
+        B = _px_cube([8.0, 0.0, 0.0], 0.4, n, grid_shift=-4.0)
+        x = A["origin"][0] + 0.4 * np.arange(n)
+        maskA = np.broadcast_to((x < 4.0)[:, None, None], A["rho"].shape)  # nearest-atom split at x = 4
+        leak = 0.03 / (maskA.sum() * 0.4 ** 3)  # a net charge of 0.03 e on each fragment
+        rhoA, _ = neutralize_fragment(np.where(maskA, A["rho"] + leak, 0.0), maskA)
+        rhoB, _ = neutralize_fragment(np.where(~maskA, B["rho"] + leak * maskA.sum() / (~maskA).sum(), 0.0), ~maskA)
+        values.append(tdc_coupling_fft_simple(dict(A, rho=rhoA), dict(B, rho=rhoB))["J_cm1"])
+    assert max(values) - min(values) < 1e-3 * abs(values[0])
+
+
+def test_simple_fft_rejects_different_grids():
+    import pytest
+
+    from eecc.coupling.tdc_fft import tdc_coupling_fft_simple
+
+    with pytest.raises(ValueError, match="same grid"):
+        tdc_coupling_fft_simple(_px_cube([0.0, 0.0, 0.0], 0.4, 19), _px_cube([8.0, 0.0, 0.0], 0.4, 19))

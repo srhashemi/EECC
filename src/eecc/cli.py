@@ -25,10 +25,18 @@ def _cmd_intermolecular(args):
     )
 
 
+def _fft_pad(args) -> int:
+    """--pad only applies to the periodic FFT; say so instead of silently ignoring it."""
+    if args.pad is not None and args.boundary == "free":
+        print("NOTE: --pad applies to --boundary periodic only and is ignored; the default free boundary "
+              "needs no padding (add --boundary periodic to reproduce the published FFT values).")
+    return 3 if args.pad is None else args.pad
+
+
 def _cmd_tdc_two_monomers(args):
     from eecc.workflows.tdc_two_monomers import run_tdc
     run_tdc(args.cubeA, args.cubeB,
-            dielectric=args.dielectric, pad_factor=args.pad,
+            dielectric=args.dielectric, pad_factor=_fft_pad(args),
             threshold=args.threshold, boundary=args.boundary)
 
 
@@ -39,7 +47,7 @@ def _cmd_tdc_one_dimer(args):
     fragA = parse_indices(args.fragA)
     fragB = parse_indices(args.fragB)
     run_one_dimer_tdc(args.dimer_cube, fragA, fragB,
-                      dielectric=args.dielectric, pad_factor=args.pad, boundary=args.boundary)
+                      dielectric=args.dielectric, pad_factor=_fft_pad(args), boundary=args.boundary)
 
 
 def _cmd_tresp(args):
@@ -237,8 +245,8 @@ def main() -> None:
     p.add_argument("cubeB", help="Monomer B cube filename inside inputs/")
     p.add_argument("--boundary", choices=["free", "periodic"], default="free",
                    help="FFT boundary: free (isolated; matches the direct sum, default) or periodic "
-                        "(the published workflow; off by 10-30 %% for neighbours, more for distant pairs)")
-    p.add_argument("--pad", type=int, default=3, help="FFT padding factor (periodic boundary only)")
+                        "(the published workflow; ~1 %% off for close neighbours, tens of %% for distant pairs)")
+    p.add_argument("--pad", type=int, default=None, help="FFT padding factor (periodic boundary only; default 3)")
     p.add_argument("--threshold", type=float, default=0.0005,
                    help="Direct-sum threshold: keep voxels with |q| > threshold*max|q|")
     p.add_argument("--dielectric", type=float, default=1.0, help="Dielectric constant")
@@ -251,7 +259,7 @@ def main() -> None:
     p.add_argument("--fragB", type=str, required=True, help="Atom indices for fragment B")
     p.add_argument("--boundary", choices=["free", "periodic"], default="free",
                    help="FFT boundary: free (isolated, exact discrete sum; default) or periodic (the published workflow)")
-    p.add_argument("--pad", type=int, default=3, help="FFT padding factor (periodic boundary only)")
+    p.add_argument("--pad", type=int, default=None, help="FFT padding factor (periodic boundary only; default 3)")
     p.add_argument("--dielectric", type=float, default=1.0, help="Dielectric constant")
     p.set_defaults(func=_cmd_tdc_one_dimer)
 

@@ -58,7 +58,15 @@ def run_tdc(
 
     # --- FFT TDC ---
     t0 = time.time()
-    fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
+    try:
+        fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
+    except ValueError as exc:  # free-space grid too large (very large or distant cubes)
+        if boundary != "free":
+            raise
+        print(f"\n  WARNING: {exc}.\n  Falling back to the periodic FFT, which is inaccurate for distant pairs; "
+              "the direct sum below is the reference.")
+        boundary = "periodic"
+        fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
     t_fft = time.time() - t0
 
     # --- Direct TDC ---

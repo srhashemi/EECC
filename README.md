@@ -489,7 +489,7 @@ from eecc.coupling.tdc_fft import tdc_coupling_fft
 cubeA = read_cube("monomerA.cub", units="bohr")
 cubeB = read_cube("monomerB.cub", units="bohr")
 
-result = tdc_coupling_fft(cubeA, cubeB, dielectric=1.0, pad_factor=3)
+result = tdc_coupling_fft(cubeA, cubeB, dielectric=1.0)  # free boundary; boundary="periodic", pad_factor=3 as published
 
 print(f"J = {result['J_cm1']:.2f} cm^-1  ({result['J_eV']:.6f} eV)")
 print(f"Point-dipole:     {result['Jpd_cm1']:.2f} cm^-1")

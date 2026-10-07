@@ -21,6 +21,20 @@ from eecc.geometry.fragments import (
 )
 
 
+def neutralize_fragment(rho: np.ndarray, mask: np.ndarray, boundary: str = "free"):
+    """Remove a fragment's net transition charge; returns (rho, offset per voxel).
+
+    free: within the fragment's own voxels only. A mean subtracted over the whole box
+    would leave a uniform background charge, which an isolated (free-boundary) problem
+    feels, so the coupling would depend on the box size. periodic: over the whole box,
+    as in the published workflow.
+    """
+    if boundary == "free":
+        off = float(rho[mask].mean())
+        return np.where(mask, rho - off, 0.0), off
+    return neutralize_full_density(rho)
+
+
 def run_one_dimer_tdc(
     dimer_name: str, fragA: list, fragB: list,
     dielectric: float = 1.0, pad_factor: int = 3, boundary: str = "free",
@@ -35,8 +49,8 @@ def run_one_dimer_tdc(
 
     maskA, maskB, rhoA_raw, rhoB_raw = split_cube_by_nearest_atom(cube, fragA, fragB)
 
-    rhoA, offA = neutralize_full_density(rhoA_raw)
-    rhoB, offB = neutralize_full_density(rhoB_raw)
+    rhoA, offA = neutralize_fragment(rhoA_raw, maskA, boundary)
+    rhoB, offB = neutralize_fragment(rhoB_raw, maskB, boundary)
 
     cubeA = build_monomer_cube(cube, fragA, rhoA)
     cubeB = build_monomer_cube(cube, fragB, rhoB)

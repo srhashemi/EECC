@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, Any, Tuple
 
 import numpy as np
-from scipy.fft import fftn, ifftn, fftfreq
+from scipy.fft import fftn, ifftn, fftfreq, irfftn, rfftn
 from scipy.interpolate import RegularGridInterpolator
 
 from eecc.constants import EV_TO_CM, KE_EV_ANG, DEBYE_PER_EANG
@@ -166,15 +166,21 @@ def _free_space_potential(
     if 8 * np.prod(n.astype(float)) > FREE_FFT_MAX_POINTS:
         raise ValueError(f"free-space FFT grid {tuple(2 * n)} is too large; use the direct TDC sum")
 
-    q = np.zeros(2 * n)
+    shape = tuple(int(2 * m) for m in n)
+    q = np.zeros(shape)
     q[shift[0]:shift[0] + rhoB.shape[0], shift[1]:shift[1] + rhoB.shape[1],
       shift[2]:shift[2] + rhoB.shape[2]] = rhoB * np.prod(h)
+    Fq = rfftn(q)
+    del q
     axes = [np.minimum(np.arange(2 * m), 2 * m - np.arange(2 * m)) * hk for m, hk in zip(n, h)]
-    R = np.sqrt(axes[0][:, None, None] ** 2 + axes[1][None, :, None] ** 2 + axes[2][None, None, :] ** 2)
-    R[0, 0, 0] = 1.0
-    G = 1.0 / R
+    G = axes[0][:, None, None] ** 2 + axes[1][None, :, None] ** 2 + axes[2][None, None, :] ** 2
+    G[0, 0, 0] = 1.0
+    np.sqrt(G, out=G)
+    np.reciprocal(G, out=G)
     G[0, 0, 0] = _CUBE_MEAN_INV_R / np.cbrt(np.prod(h))
-    V = ifftn(fftn(q) * fftn(G)).real[:n[0], :n[1], :n[2]]
+    Fq *= rfftn(G)
+    del G
+    V = irfftn(Fq, s=shape)[:n[0], :n[1], :n[2]].copy()  # copy: release the full padded buffer
     return V, origin
 
 
@@ -194,7 +200,8 @@ def tdc_coupling_fft(
     boundary='periodic' reproduces the published workflow: cubeB's own grid padded
     by *pad_factor* with a periodic Coulomb kernel. Periodic images of B then add to
     the potential, and parts of cubeA outside the padded grid see zero potential, so
-    the coupling is off by about 10-30 % for neighbours and more for distant pairs.
+    the coupling is off by about 1 % for close neighbours and by tens of percent for
+    distant pairs (BODIPY tetramer: +23 % at 16.8 Å, -52 % at 24.7 Å).
 
     Returns a dict with J_eV, J_cm1, transition dipoles, and point-dipole
     and extended-dipole comparison values.
@@ -252,7 +259,8 @@ def tdc_coupling_fft(
         'muB_eAng': muB['mu'],
         'muB_D': muB['mu_D'],
         'dx_dy_dz_Ang': (dx, dy, dz),
-        'pad_factor': pad_factor,
+        'boundary': boundary,
+        'pad_factor': pad_factor if boundary == "periodic" else None,
         'Jpd_eV': Jpd_eV,
         'Jpd_cm1': Jpd_cm1,
         'Rvec_A_to_B_Ang': Rvec_phys,
@@ -277,16 +285,25 @@ def tdc_coupling_fft_simple(
 
     Use this when cubeA and cubeB already share the same origin and
     voxel vectors (e.g. fragments split from a single dimer cube).
-    boundary='free' (default) is the isolated problem (exact discrete sum);
+    boundary='free' (default) is the isolated problem: for fragment densities on
+    disjoint voxels (as the nearest-atom split gives) it equals the direct sum over
+    all voxel pairs. Where both densities share voxels, the FFT uses the mean 1/r
+    over a voxel for coinciding points, which a point-pair sum cannot reproduce.
     'periodic' pads the shared grid by *pad_factor* with a periodic kernel, as in
     the published workflow.
     """
     rhoA, rhoB = cubeA['rho'], cubeB['rho']
     dxA, dyA, dzA = grid_spacing(cubeA)
+    same = (rhoA.shape == rhoB.shape and np.allclose(cubeA['origin'], cubeB['origin'])
+            and all(np.allclose(cubeA[v], cubeB[v]) for v in ('vx', 'vy', 'vz')))
+    if not same:
+        raise ValueError("tdc_coupling_fft_simple needs cubes on the same grid; use tdc_coupling_fft")
 
     if boundary == "free":
         V, V_origin = _free_space_potential(rhoB, (dxA, dyA, dzA), cubeA['origin'], cubeA)
-        phi = _interpolate_potential(V, V_origin, dxA, dyA, dzA, cubeA)
+        # the potential lattice contains the shared grid: take the block instead of interpolating
+        o = np.rint((np.asarray(cubeA['origin'], float) - V_origin) / np.array([dxA, dyA, dzA])).astype(int)
+        phi = V[o[0]:o[0] + rhoA.shape[0], o[1]:o[1] + rhoA.shape[1], o[2]:o[2] + rhoA.shape[2]]
         J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * phi)) * voxel_volume(cubeA)
         return {'J_eV': J_eV, 'J_cm1': J_eV * EV_TO_CM}
     if boundary != "periodic":
