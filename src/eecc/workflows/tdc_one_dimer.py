@@ -8,6 +8,9 @@ import numpy as np
 
 from eecc.io.cube import read_cube, grid_spacing
 from eecc.coupling.tdc_fft import (
+    FreeGridTooLarge,
+    boundary_label,
+    check_free_grid,
     transition_dipole_from_cube,
     integrate_density_total_charge,
     neutralize_full_density,
@@ -21,9 +24,26 @@ from eecc.geometry.fragments import (
 )
 
 
+def neutralize_fragment(rho: np.ndarray, mask: np.ndarray, boundary: str = "free"):
+    """Remove a fragment's net transition charge; returns (rho, offset).
+
+    free: in proportion to |rho| within the fragment's voxels (offset = removed charge per
+    unit |rho|). The correction then sits where the density is and does not depend on the
+    box: a uniform mean over the box, or over the fragment's nearest-atom region (which
+    reaches the box edges), adds a dipole that changes with the cube margin. periodic:
+    the mean over the whole box (offset per voxel), as in the published workflow.
+    """
+    if boundary == "free":
+        w = np.abs(np.where(mask, rho, 0.0))
+        total = float(w.sum())
+        off = float(np.where(mask, rho, 0.0).sum()) / total if total > 0.0 else 0.0
+        return np.where(mask, rho, 0.0) - off * w, off
+    return neutralize_full_density(rho)
+
+
 def run_one_dimer_tdc(
     dimer_name: str, fragA: list, fragB: list,
-    dielectric: float = 1.0, pad_factor: int = 3,
+    dielectric: float = 1.0, pad_factor: int | None = None, boundary: str = "free",
 ) -> None:
     """Run TDC coupling from a single dimer cube file."""
     inputs_dir = "inputs"
@@ -32,11 +52,16 @@ def run_one_dimer_tdc(
 
     cube_path = os.path.join(inputs_dir, dimer_name)
     cube = read_cube(cube_path, units="bohr")
+    if boundary == "free":
+        try:  # check before the slow nearest-atom split
+            check_free_grid(cube, cube)
+        except FreeGridTooLarge as exc:
+            raise SystemExit(f"ERROR: {exc}. Write the dimer cube on a coarser grid.") from None
 
     maskA, maskB, rhoA_raw, rhoB_raw = split_cube_by_nearest_atom(cube, fragA, fragB)
 
-    rhoA, offA = neutralize_full_density(rhoA_raw)
-    rhoB, offB = neutralize_full_density(rhoB_raw)
+    rhoA, offA = neutralize_fragment(rhoA_raw, maskA, boundary)
+    rhoB, offB = neutralize_fragment(rhoB_raw, maskB, boundary)
 
     cubeA = build_monomer_cube(cube, fragA, rhoA)
     cubeB = build_monomer_cube(cube, fragB, rhoB)
@@ -56,7 +81,8 @@ def run_one_dimer_tdc(
     QB = integrate_density_total_charge(cubeB)
     print(f"Total charge A = {QA:.6e} e")
     print(f"Total charge B = {QB:.6e} e")
-    print(f"Neutralization offsets: offA = {offA:.6e}, offB = {offB:.6e} (e/Ang^3)")
+    dV = np.prod(grid_spacing(cube))
+    print(f"Net charge removed: A = {float(rhoA_raw.sum()) * dV:.6e} e, B = {float(rhoB_raw.sum()) * dV:.6e} e")
 
     rhoA_rms = np.sqrt(np.mean(cubeA['rho']**2))
     rhoB_rms = np.sqrt(np.mean(cubeB['rho']**2))
@@ -77,15 +103,15 @@ def run_one_dimer_tdc(
     Jpd_eV, Jpd_cm1 = point_dipole_coupling(muA['mu'], muB['mu'], Rvec, dielectric=dielectric)
 
     print(f"  dielectric = {dielectric}")
-    print(f"  pad factor = {pad_factor}")
+    print(f"  {boundary_label(boundary, pad_factor)}")
     print(f"Point-dipole J ~ {Jpd_cm1:.2f} cm^-1 ({Jpd_eV:.6f} eV)")
 
-    tdc = tdc_coupling_fft_simple(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor)
+    tdc = tdc_coupling_fft_simple(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
 
     out_path = os.path.join(outputs_dir, "TDC_from_one_dimer.txt")
     with open(out_path, "w") as f:
         f.write(f"# dielectric = {dielectric}\n")
-        f.write(f"# pad_factor = {pad_factor}\n")
+        f.write(f"# {boundary_label(boundary, pad_factor)}\n")
         f.write("J_eV  J_cm^-1\n")
         f.write(f"{tdc['J_eV']:.8f}  {tdc['J_cm1']:.4f}\n\n")
 

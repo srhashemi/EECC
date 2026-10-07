@@ -100,11 +100,12 @@ def pair_couplings(A: FragmentData, B: FragmentData, methods: List[str], ccfg,
                 cache[frag.name] = read_cube(frag.cube_path, units="bohr")
         cA, cB = cache[A.name], cache[B.name]
         if "tdc_fft" in methods:
-            from eecc.coupling.tdc_fft import tdc_coupling_fft
+            from eecc.coupling.tdc_fft import FreeGridTooLarge, tdc_coupling_fft
+            pad = ccfg.tdc_pad if ccfg.tdc_boundary == "periodic" else None
             try:
-                out["tdc_fft"] = tdc_coupling_fft(cA, cB, dielectric=eps, pad_factor=ccfg.tdc_pad,
+                out["tdc_fft"] = tdc_coupling_fft(cA, cB, dielectric=eps, pad_factor=pad,
                                                   boundary=ccfg.tdc_boundary)["J_cm1"]
-            except ValueError:  # grid too large for a free-space FFT: rely on the direct sum
+            except FreeGridTooLarge:  # grid too large for a free-space FFT: rely on the direct sum
                 out["tdc_fft"] = float("nan")
         if "tdc_direct" in methods:
             from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce

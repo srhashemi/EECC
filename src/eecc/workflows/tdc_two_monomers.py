@@ -10,7 +10,9 @@ import os
 import time
 
 from eecc.io.cube import read_cube, grid_spacing
-from eecc.coupling.tdc_fft import tdc_coupling_fft, transition_dipole_from_cube
+from eecc.coupling.tdc_fft import (
+    FreeGridTooLarge, boundary_label, dipole_models, tdc_coupling_fft, transition_dipole_from_cube,
+)
 from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce
 
 
@@ -23,8 +25,9 @@ def run_tdc(
     monomerA_name: str,
     monomerB_name: str,
     dielectric: float = 1.0,
-    pad_factor: int = 3,
+    pad_factor: int | None = None,
     threshold: float = 0.0005,
+    boundary: str = "free",
 ) -> None:
     """Run all TDC coupling methods between two monomer cubes."""
     inputs_dir = "inputs"
@@ -57,7 +60,11 @@ def run_tdc(
 
     # --- FFT TDC ---
     t0 = time.time()
-    fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor)
+    try:
+        fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
+    except FreeGridTooLarge as exc:  # very large cubes: the direct sum below is the result
+        print(f"\n  WARNING: {exc}; TDC (FFT) is not computed (nan), use TDC (direct).")
+        fft = {'J_eV': float('nan'), 'J_cm1': float('nan'), **dipole_models(cubeA, cubeB, dielectric)}
     t_fft = time.time() - t0
 
     # --- Direct TDC ---
@@ -77,7 +84,7 @@ def run_tdc(
     print("=" * w)
 
     print(f"\n  R_AB = {fft['R_AB_Ang']:.4f} Ang")
-    print(f"  FFT pad factor = {pad_factor}")
+    print(f"  {boundary_label(boundary, pad_factor)}")
     print(f"  Direct threshold = {threshold}  "
           f"(voxels: A={direct['nA']:,}, B={direct['nB']:,},  "
           f"capture: A={direct['capture_A']:.1%}, B={direct['capture_B']:.1%})")
@@ -101,7 +108,7 @@ def run_tdc(
 
         f.write(f"# Grid A: {cubeA['nv']},  spacing ({dxA:.6f}, {dyA:.6f}, {dzA:.6f}) Ang\n")
         f.write(f"# Grid B: {cubeB['nv']},  spacing ({dxB:.6f}, {dyB:.6f}, {dzB:.6f}) Ang\n")
-        f.write(f"# FFT pad factor = {pad_factor}\n")
+        f.write(f"# {boundary_label(boundary, pad_factor)}\n")
         f.write(f"# Direct threshold = {threshold}  "
                 f"(voxels: A={direct['nA']:,}, B={direct['nB']:,},  "
                 f"capture: A={direct['capture_A']:.1%}, B={direct['capture_B']:.1%})\n")
