@@ -624,6 +624,25 @@ def test_diabatic_dipoles_rotate_with_the_states():
         diabatic_dipoles(res, mu.T[:, :3])
 
 
+def test_fragment_geometry_and_state_info():
+    from eecc.qm.system import fragment_geometry, state_info
+
+    g = fragment_geometry(ETHYLENE, len(ETHYLENE))
+    xyz = np.asarray(ETHYLENE.coords)
+    assert np.allclose(g["center_ang"], xyz[:2].mean(axis=0), atol=1e-9)  # symmetric: between the carbons
+    axes = np.array(g["principal_axes"])
+    assert np.allclose(axes @ axes.T, np.eye(3), atol=1e-12)
+    cc = (xyz[1] - xyz[0]) / np.linalg.norm(xyz[1] - xyz[0])
+    assert abs(abs(axes[0] @ cc) - 1) < 1e-9  # smallest moment: along the C=C bond
+    normal = np.cross(xyz[2] - xyz[0], xyz[3] - xyz[0])
+    assert abs(abs(axes[2] @ normal / np.linalg.norm(normal)) - 1) < 1e-9  # largest moment: the plane normal
+    # caps are excluded: the centre only uses the first n_own atoms
+    assert np.allclose(fragment_geometry(ETHYLENE, 2)["center_ang"], xyz[:2].mean(axis=0))
+    assert state_info("CT(frag1->frag2)") == {"label": "CT(frag1->frag2)", "type": "CT",
+                                              "donor": "frag1", "acceptor": "frag2"}
+    assert state_info("LE(a)") == {"label": "LE(a)", "type": "LE", "fragment": "a"}
+
+
 def test_system_stage_dependencies_and_hashes(tmp_path):
     """The whole-system run depends only on the geometry and TD method, not on the fragments."""
     from eecc.qm.pipeline import STAGES, Pipeline
@@ -719,6 +738,13 @@ def test_pipeline_with_system_stage(tmp_path):
     pipe.run()
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and min(res["completeness"]) > 0.9
+    # documented exciton-model format: version, units, state types, fragment centres and axes
+    from eecc.qm.pipeline import DIABATIZE_FORMAT
+    assert res["format_version"] == int(DIABATIZE_FORMAT) and "H_eV" in res["units"]
+    assert res["states"] == [{"label": "LE(frag1)", "type": "LE", "fragment": "frag1"},
+                             {"label": "LE(frag2)", "type": "LE", "fragment": "frag2"}]
+    c1, c2 = (np.array(f["center_ang"]) for f in res["fragments"])
+    assert np.allclose(c2 - c1, [4.0, 0.0, 0.0], atol=1e-6)  # the stacking vector of _stacked_dimer
     # diabatic transition dipoles: equal for the two sites of the symmetric dimer and close to the
     # fragment's (here a dark state, so an absolute tolerance)
     mu = np.linalg.norm(res["transition_dipoles_au"], axis=1)
@@ -736,7 +762,8 @@ def test_pipeline_with_system_stage(tmp_path):
     # not current anywhere (is_done, restamp), and rerun without errors
     import eecc.qm.pipeline as pipeline_module
     path = os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")
-    old = {k: v for k, v in json.load(open(path)).items() if k not in ("transition_dipoles_au", "oscillator_strengths")}
+    old = {k: v for k, v in json.load(open(path)).items()
+           if k not in ("transition_dipoles_au", "oscillator_strengths", "format_version")}
     json.dump(old, open(path, "w"))
     spath = os.path.join(pipe.stage_dir("system"), "system_td.json")
     sys_td = json.load(open(spath))

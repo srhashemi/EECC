@@ -200,6 +200,23 @@ slurm:
   time_system: "24:00:00"    # enough for a dimer; the tetramer took 47 h
 ```
 
+`diabatic.json` is the exciton model in a fixed, versioned format (`format_version`),
+meant to be read by other programs, for example for spectra:
+
+| Key | Content |
+|---|---|
+| `format_version`, `units`, `conventions` | format number; units of every quantity; frame, sign and CT conventions |
+| `labels`, `states` | diabatic states in Hamiltonian order; `states` gives each one's type (`LE` with its `fragment`, or `CT` with `donor` and `acceptor`) |
+| `H_eV` | exciton Hamiltonian: site and CT energies on the diagonal, total couplings off it (eV) |
+| `transition_dipoles_au`, `oscillator_strengths` | transition dipole (x, y, z; atomic units) and oscillator strength of each diabatic state |
+| `completeness` | how well the computed whole-system states reproduce each diabatic state (0–1) |
+| `fragments` | per fragment: `name`, `natoms`, `center_ang` (centre of mass, Å) and `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal), from the fragment's own atoms without caps |
+| `adiabatic_eV`, `pairs` | whole-system excitation energies; per fragment pair, the total and the Coulomb couplings (cm⁻¹) |
+
+All positions and vectors are in the frame of `system.xyz`. The phase of each LE
+state is arbitrary, so signs of couplings and dipoles are arbitrary per state
+but consistent with each other.
+
 On one 128-core node (see [Hardware](#hardware)) the BODIPY dimer (1244 basis
 functions) took 11 h, the trimer (1864) 20 h and the tetramer (2484) 47 h.
 
