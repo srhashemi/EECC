@@ -8,11 +8,10 @@ from typing import Any, Dict
 
 import numpy as np
 
-from eecc.constants import HARTREE_TO_EV
+from eecc.constants import AU_TO_DEBYE, HARTREE_TO_EV
 from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, use_cartesian
 from eecc.qm.structure import Structure
 
-AU_TO_DEBYE = 2.541746473
 
 
 def transition_density_matrix(mf, xy) -> np.ndarray:

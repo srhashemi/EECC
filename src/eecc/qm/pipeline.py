@@ -26,6 +26,8 @@ DEPENDS = {
     "fragments": ("opt",), "td": ("fragments",), "transition": ("td",), "couplings": ("transition",),
     "system": ("opt",), "diabatize": ("system", "td"),
 }
+# Output format of the diabatize stage; raising it reruns older results (2: diabatic transition dipoles).
+DIABATIZE_FORMAT = "2"
 PER_FRAGMENT = ("td", "transition")
 
 
@@ -75,7 +77,7 @@ class Pipeline:
                             cfg.section_hash("system", ignore=("include_ct", "enabled")))
         if stage == "diabatize":
             return _combine(self.expected_hash("system"), self.expected_hash("td"),
-                            cfg.section_hash("system", ignore=("enabled",)))
+                            cfg.section_hash("system", ignore=("enabled",)), "format " + DIABATIZE_FORMAT)
         h = _combine(h, cfg.section_hash("fragments"))
         if stage == "fragments":
             return h
@@ -318,7 +320,14 @@ class Pipeline:
             "system": ["system_td.npz", "system_td.json", "system.xyz"],
             "diabatize": ["diabatic.json", "diabatic.txt"],
         }[stage]
-        return os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
+        ok = os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
+        if ok and stage == "diabatize":  # a result from before the diabatic transition dipoles is not current
+            try:
+                with open(os.path.join(d, "diabatic.json")) as f:
+                    ok = "transition_dipoles_au" in json.load(f)
+            except (OSError, ValueError):
+                ok = False
+        return ok
 
     def restamp(self) -> List[str]:
         """Mark stages whose outputs exist as up to date, in pipeline order.
