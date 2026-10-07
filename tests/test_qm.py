@@ -624,8 +624,8 @@ def test_diabatic_dipoles_rotate_with_the_states():
         diabatic_dipoles(res, mu.T[:, :3])
 
 
-def test_fragment_geometry_and_state_info():
-    from eecc.qm.system import fragment_geometry, state_info
+def test_fragment_geometry_and_state_types():
+    from eecc.qm.system import fragment_geometry, state_types
 
     g = fragment_geometry(ETHYLENE, len(ETHYLENE))
     xyz = np.asarray(ETHYLENE.coords)
@@ -636,11 +636,18 @@ def test_fragment_geometry_and_state_info():
     assert abs(abs(axes[0] @ cc) - 1) < 1e-9  # smallest moment: along the C=C bond
     normal = np.cross(xyz[2] - xyz[0], xyz[3] - xyz[0])
     assert abs(abs(axes[2] @ normal / np.linalg.norm(normal)) - 1) < 1e-9  # largest moment: the plane normal
-    # caps are excluded: the centre only uses the first n_own atoms
-    assert np.allclose(fragment_geometry(ETHYLENE, 2)["center_ang"], xyz[:2].mean(axis=0))
-    assert state_info("CT(frag1->frag2)") == {"label": "CT(frag1->frag2)", "type": "CT",
-                                              "donor": "frag1", "acceptor": "frag2"}
-    assert state_info("LE(a)") == {"label": "LE(a)", "type": "LE", "fragment": "a"}
+    assert np.all(np.diff(g["moments_amu_ang2"]) > 0)
+    # caps are excluded: a heavy atom appended after the own atoms changes nothing
+    capped = Structure(ETHYLENE.symbols + ["Cl"], np.vstack([xyz, [3.0, 1.0, 2.0]]))
+    assert np.allclose(fragment_geometry(capped, len(ETHYLENE))["center_ang"], g["center_ang"])
+    assert np.allclose(fragment_geometry(capped, len(ETHYLENE))["principal_axes"], axes)
+    assert not np.allclose(fragment_geometry(capped, len(capped))["center_ang"], g["center_ang"])
+    # sign rule on a tie: an axis at 45 degrees gets its first component positive whatever the roundoff
+    square = Structure(["C"] * 4, np.array([[1, 1, 0], [-1, -1, 0], [2, -2, 0], [-2, 2, 0]], float))
+    assert np.all(np.array(fragment_geometry(square, 4)["principal_axes"])[:2, 0] > 0)
+    assert state_types(["a", "b"], ["LE(a)", "LE(b)", "CT(b->a)"]) == [
+        {"label": "LE(a)", "type": "LE", "fragment": "a"}, {"label": "LE(b)", "type": "LE", "fragment": "b"},
+        {"label": "CT(b->a)", "type": "CT", "donor": "b", "acceptor": "a"}]
 
 
 def test_system_stage_dependencies_and_hashes(tmp_path):

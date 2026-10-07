@@ -210,12 +210,14 @@ meant to be read by other programs, for example for spectra:
 | `H_eV` | exciton Hamiltonian: site and CT energies on the diagonal, total couplings off it (eV) |
 | `transition_dipoles_au`, `oscillator_strengths` | transition dipole (x, y, z; atomic units) and oscillator strength of each diabatic state |
 | `completeness` | how well the computed whole-system states reproduce each diabatic state (0–1) |
-| `fragments` | per fragment: `name`, `natoms`, `center_ang` (centre of mass, Å) and `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal), from the fragment's own atoms without caps |
+| `fragments` | per fragment: `name`, `natoms_own`, `center_ang` (centre of mass, Å), `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal) and `moments_amu_ang2`, from the fragment's own atoms without caps; two equal moments (a symmetric top) leave the two axes free to rotate in their plane |
 | `adiabatic_eV`, `pairs` | whole-system excitation energies; per fragment pair, the total and the Coulomb couplings (cm⁻¹) |
 
-All positions and vectors are in the frame of `system.xyz`. The phase of each LE
-state is arbitrary, so signs of couplings and dipoles are arbitrary per state
-but consistent with each other.
+All positions and vectors are in the frame of `system.xyz`. The phase of each
+diabatic state (LE or CT) is arbitrary, so signs of couplings and dipoles are
+arbitrary per state but consistent with each other. A `diabatic.json` in an older
+format is rewritten the next time the pipeline runs (only the diabatize stage reruns;
+the whole-system TDDFT is reused).
 
 On one 128-core node (see [Hardware](#hardware)) the BODIPY dimer (1244 basis
 functions) took 11 h, the trimer (1864) 20 h and the tetramer (2484) 47 h.
