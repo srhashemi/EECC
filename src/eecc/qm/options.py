@@ -95,7 +95,7 @@ HELP: Dict[str, str] = {
     "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (tighter than td.davidson_tol)",
     "vibronic.eri": "two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) "
                     "or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take "
-                    "at most half of resources.memory_mb",
+                    "at most half of resources.memory_mb; not used with td.density_fit",
     "resources.threads": "threads; 0: OMP_NUM_THREADS or all cores",
     "resources.memory_mb": "PySCF memory (MB)",
     "resources.tmpdir": "PySCF scratch directory; null: default",

@@ -915,9 +915,20 @@ def test_vibronic_eri_choice():
     from eecc.qm.vibronic import eri_incore
 
     assert eri_incore("auto", 640, 200000, hessian=False) is None  # PySCF's choice before the Hessian
-    assert eri_incore("auto", 100, 16000, hessian=True)  # 0.1 GB
-    assert not eri_incore("auto", 640, 200000, hessian=True)  # 168 GB of 200 GB: the Hessian would not fit
+    assert eri_incore("auto", 100, 16000, hessian=True) is None  # 0.1 GB: PySCF's choice
+    assert eri_incore("auto", 640, 200000, hessian=True) is False  # 168 GB of 200 GB: the Hessian would not fit
     assert eri_incore("incore", 640, 1000, hessian=True) and eri_incore("direct", 10, 1e9, hessian=False) is False
+
+
+def test_vibronic_unreadable_npz_means_recompute(tmp_path):
+    from eecc.qm.vibronic import _load_npz, _save_npz
+
+    p = str(tmp_path / "x.npz")
+    _save_npz(p, {"calc_key": np.array("k"), "a": np.arange(1000.0)})
+    assert _load_npz(p, "k") is not None and _load_npz(p, "other") is None
+    data = open(p, "rb").read()
+    open(p, "wb").write(data[: len(data) // 2])  # truncated, e.g. a file system problem
+    assert _load_npz(p, "k") is None
 
 
 def test_vibronic_resumes_after_a_killed_hessian(tmp_path, monkeypatch):
@@ -930,23 +941,37 @@ def test_vibronic_resumes_after_a_killed_hessian(tmp_path, monkeypatch):
     geo = tmp_path / "x.xyz"
     save_xyz(_stacked_dimer(), str(geo))
     cfg = _small_config(tmp_path, geo, td={"basis": "6-31g", "xc": "b3lyp", "method": "tda", "nstates": 3})
+    from pyscf.grad import tdrks as grad_tdrks
+    from pyscf.tdscf import rhf as td_rhf
+
+    hess_kernel = hess_rks.Hessian.kernel
+    held = []
+
+    def checked_hessian(self, *a, **k):  # whether the integrals are in memory during the Hessian
+        held.append(self.base._eri is not None)
+        return hess_kernel(self, *a, **k)
+
+    monkeypatch.setattr(hess_rks.Hessian, "kernel", checked_hessian)
     cfg.vibronic.eri = "incore"
     ref = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "ref"), "h2co")
     ref_raw = dict(np.load(tmp_path / "ref" / "vibronic.npz"))
     assert not os.path.exists(tmp_path / "ref" / vibronic.PARTIAL)
+    assert held == [True]
 
     work = str(tmp_path / "run")
     cfg.vibronic.eri = "direct"
-    hess_kernel = hess_rks.Hessian.kernel
     monkeypatch.setattr(hess_rks.Hessian, "kernel", lambda self, *a, **k: (_ for _ in ()).throw(MemoryError("killed")))
     with pytest.raises(MemoryError):
         vibronic.run_vibronic(FORMALDEHYDE, cfg, work, "h2co")
     assert os.path.exists(os.path.join(work, vibronic.PARTIAL))
     assert not os.path.exists(os.path.join(work, "vibronic.npz"))
 
-    monkeypatch.setattr(hess_rks.Hessian, "kernel", hess_kernel)
-    monkeypatch.setattr(grad_rks.Gradients, "kernel", lambda *a, **k: pytest.fail("recomputed a gradient"))
+    monkeypatch.setattr(hess_rks.Hessian, "kernel", checked_hessian)
+    for cls in (grad_rks.Gradients, grad_tdrks.Gradients, td_rhf.TDA):
+        monkeypatch.setattr(cls, "kernel", lambda *a, **k: pytest.fail("recomputed a step before the Hessian"))
     out = vibronic.run_vibronic(FORMALDEHYDE, cfg, work, "h2co")
+    assert held == [True, False]  # direct: no in-memory integrals during the Hessian
+    assert os.path.exists(os.path.join(work, "vibronic_previous.log"))
     raw = dict(np.load(os.path.join(work, "vibronic.npz")))
     assert not os.path.exists(os.path.join(work, vibronic.PARTIAL))
     # direct == in-memory integrals, up to integral screening and SCF convergence (~1e-5 relative)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import zipfile
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -210,7 +211,7 @@ def _load_npz(path: str, key: str) -> Optional[Dict[str, np.ndarray]]:
         with np.load(path) as z:
             if str(z["calc_key"]) == key:
                 return {k: z[k] for k in z.files}
-    except (OSError, ValueError, KeyError, EOFError):  # unreadable (e.g. a killed job): compute again
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):  # unreadable (e.g. truncated): compute again
         pass
     return None
 
@@ -224,19 +225,25 @@ def _save_npz(path: str, data: Dict[str, Any]) -> None:
 def eri_incore(mode: str, nao: int, memory_mb: float, hessian: bool) -> Optional[bool]:
     """Keep the two-electron integrals (nao^4 bytes with 8-fold symmetry) in memory?
 
-    True/False forces it; None leaves PySCF's choice (in memory if they fit). auto: PySCF's
-    choice for the SCF, TDDFT and gradients; for the Hessian, which needs much memory of its
-    own, only if they take at most half of *memory_mb*.
+    True/False forces it; None leaves PySCF's choice (in memory if they fit next to the memory
+    already in use). auto: PySCF's choice, but for the Hessian, which needs much memory of its
+    own, never if they take more than half of *memory_mb*.
     """
     if mode == "auto":
-        return (nao ** 4 / 1e6 <= 0.5 * memory_mb) if hessian else None
+        return False if hessian and nao ** 4 / 1e6 > 0.5 * memory_mb else None
     return mode == "incore"
 
 
 def _set_eri(mf, incore: Optional[bool]) -> None:
+    """Apply eri_incore's choice to a (non-density-fitted) PySCF SCF object.
+
+    PySCF's RHF.get_jk builds the in-memory array when mf._eri exists, mol.incore_anyway is set,
+    or mf._is_mem_enough(); all three are set here. _compute checks afterwards that it worked.
+    """
     if incore is False:
         mf._eri = None  # release the array if the SCF built one
-        mf._is_mem_enough = lambda: False  # PySCF then never builds it
+        mf._is_mem_enough = lambda: False
+        mf.mol.incore_anyway = False  # may come from the PySCF configuration
     elif incore:
         mf.mol.incore_anyway = True
 
@@ -262,12 +269,18 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
     log = log or (lambda *a: None)
     partial_path = os.path.join(workdir, PARTIAL)
     partial = _load_npz(partial_path, key) if key else None
+    log_path = os.path.join(workdir, "vibronic.log")
+    if partial is not None and os.path.exists(log_path):  # keep the killed run's output (TDDFT, gradients)
+        os.replace(log_path, os.path.join(workdir, "vibronic_previous.log"))
     mol = build_mol(structure, td_cfg.basis, td_cfg.cart, charge, 0, cfg.resources.memory_mb,
-                    output=os.path.join(workdir, "vibronic.log"))
+                    output=log_path)
     own_chk = os.path.join(workdir, "scf.chk")
     mf = build_rks(mol, td_cfg.xc, td_cfg.grid, td_cfg.density_fit, td_cfg.conv_tol,
                    disp=None, chkfile=own_chk)
-    _set_eri(mf, eri_incore(cfg.vibronic.eri, mol.nao, cfg.resources.memory_mb, hessian=False))
+    # with density fitting PySCF holds the 3-index tensor instead; vibronic.eri does not apply
+    use_eri = not td_cfg.density_fit
+    if use_eri:
+        _set_eri(mf, eri_incore(cfg.vibronic.eri, mol.nao, cfg.resources.memory_mb, hessian=False))
     dm0 = None
     # a killed run of the same calculation left its own SCF checkpoint: the best guess
     for chk in ([own_chk] if partial is not None else []) + [guess_chk]:
@@ -280,8 +293,10 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
     mf.kernel(dm0=dm0)
     if not mf.converged:
         raise RuntimeError(f"{name}: SCF did not converge")
+    if key and partial is None:  # marks scf.chk as this calculation's converged SCF
+        _save_npz(partial_path, {"calc_key": np.array(key)})
 
-    if partial is not None:
+    if partial is not None and "grad_excited" in partial:
         g0, g1, e_exc = partial["grad_ground"], partial["grad_excited"], float(partial["excitation_eV"])
         log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV and gradients from {PARTIAL}")
     else:
@@ -300,12 +315,16 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
         if key:
             _save_npz(partial_path, {"calc_key": np.array(key), "grad_ground": np.asarray(g0),
                                      "grad_excited": np.asarray(g1), "excitation_eV": np.array(e_exc)})
-    incore = eri_incore(cfg.vibronic.eri, mol.nao, cfg.resources.memory_mb, hessian=True)
-    _set_eri(mf, incore)
-    held = mf._eri is not None or incore
-    log(f"[vibronic] {name}: ground-state Hessian ({mol.natm} atoms, {mol.nao} basis functions, "
-        f"integrals {'in memory' if held else 'direct'})")
+    incore = eri_incore(cfg.vibronic.eri, mol.nao, cfg.resources.memory_mb, hessian=True) if use_eri else None
+    if use_eri:
+        _set_eri(mf, incore)
+    how = ("density fitting" if not use_eri else "integrals in memory" if incore or mf._eri is not None
+           else "integrals direct" if incore is False else "integrals as PySCF chooses")
+    log(f"[vibronic] {name}: ground-state Hessian ({mol.natm} atoms, {mol.nao} basis functions, {how})")
     hess = mf.Hessian().kernel()
+    if incore is False and getattr(mf, "_eri", None) is not None:
+        log(f"[vibronic] {name}: WARNING PySCF held the two-electron integrals in memory despite "
+            "direct mode (changed PySCF internals?)")
     return {"hessian": np.asarray(hess), "grad_ground": np.asarray(g0), "grad_excited": np.asarray(g1),
             "excitation_eV": np.array(e_exc), "symbols": np.array(structure.symbols),
             "coords_ang": np.asarray(structure.coords, float), "e_scf_Eh": np.array(float(mf.e_tot))}

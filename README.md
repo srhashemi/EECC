@@ -277,9 +277,11 @@ Memory: holding the two-electron integrals in memory takes about nao⁴ bytes (1
 at 640 basis functions), and the Hessian needs more on top. `vibronic.eri: auto`
 keeps them in memory when they fit, but drops them before the Hessian unless they
 take at most half of `resources.memory_mb`; the Hessian then recomputes them
-(`direct`: slower, little memory; `incore`: always in memory). The gradients are saved
-in `vibronic_partial.npz` before the Hessian starts, so a rerun after a killed job
-goes straight to the Hessian.
+(`direct`: slower, little memory; `incore`: always in memory; with
+`td.density_fit` the option does not apply). The converged SCF and then the gradients
+are recorded in `vibronic_partial.npz`, so a rerun after a killed job restarts from
+its own SCF and, if the gradients were done, goes straight to the Hessian (the killed
+run's log is kept as `vibronic_previous.log`).
 
 ## Validation
 
@@ -626,7 +628,7 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled |
 | `vibronic.min_frequency` | `50.0` | cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³) |
 | `vibronic.davidson_tol` | `1.0e-06` | TDDFT convergence for the excited-state gradient (tighter than td.davidson_tol) |
-| `vibronic.eri` | `auto` | two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take at most half of resources.memory_mb |
+| `vibronic.eri` | `auto` | two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take at most half of resources.memory_mb; not used with td.density_fit |
 | `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
 | `resources.memory_mb` | `16000` | PySCF memory (MB) |
 | `resources.tmpdir` | `null` | PySCF scratch directory; null: default |

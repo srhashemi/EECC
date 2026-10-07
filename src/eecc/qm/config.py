@@ -134,7 +134,7 @@ class VibronicConfig:
     freq_scale: float = 1.0  # scales the reported frequencies (not S)
     min_frequency: float = 50.0  # cm-1; lower (and imaginary) modes get no S
     davidson_tol: float = 1e-6  # TDDFT convergence for the excited-state gradient
-    eri: str = "auto"  # two-electron integrals: incore, direct, or auto (Hessian incore if <= half of memory_mb)
+    eri: str = "auto"  # two-electron integrals: incore, direct, or auto (Hessian never incore above half of memory_mb)
 
 
 @dataclass
