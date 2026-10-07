@@ -387,9 +387,9 @@ def validate(cfg: PipelineConfig) -> None:
     if cfg.couplings.tdc_boundary not in ("free", "periodic"):
         raise ValueError("couplings.tdc_boundary must be 'free' or 'periodic'")
     v = cfg.vibronic
-    if v.cutoff <= 0 or v.freq_scale <= 0 or v.temperature < 0 or v.min_frequency < 0 or v.davidson_tol <= 0:
-        raise ValueError("vibronic: cutoff, freq_scale and davidson_tol must be positive; temperature and "
-                         "min_frequency must be >= 0")
+    if min(v.cutoff, v.freq_scale, v.min_frequency, v.davidson_tol) <= 0 or v.temperature < 0:
+        raise ValueError("vibronic: cutoff, freq_scale, min_frequency and davidson_tol must be positive; "
+                         "temperature must be >= 0")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
         raise ValueError("transition.cube spacing and margin must be positive")
 

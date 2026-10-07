@@ -842,6 +842,12 @@ def test_huang_rhys_of_a_displaced_oscillator():
     assert np.allclose(np.abs(res["d"]), np.abs(d_true), rtol=1e-8)
     assert np.allclose(res["S"], d_true ** 2 / 2, rtol=1e-8)
     assert np.allclose(res["freq_cm"], w_true * 219474.6313632)
+    # freq_scale scales the frequencies (and the threshold applies to them), not S
+    scaled = huang_rhys(st.symbols, st.coords, H, grad.reshape(4, 3), min_freq_cm=1250.0, freq_scale=0.95)
+    assert np.allclose(scaled["freq_cm"], 0.95 * res["freq_cm"])
+    assert list(scaled["valid"]) == [False, False, True, True, True, True]  # 1235 cm-1 < 1250 after scaling
+    assert np.allclose(scaled["S"][2:], res["S"][2:])
+    assert _masses_amu(["B"])[0] == pytest.approx(11.0093, abs=1e-4)  # most common isotope, as Gaussian
 
 
 def test_vibronic_summary():
@@ -859,7 +865,6 @@ def test_vibronic_summary():
     hot = summarize(freq, S, valid, cutoff_cm=800, temperature_K=300.0)
     coth = 1 / np.tanh(freq[1:3] / (2 * KB_CM * 300))
     assert hot["sigma_low_cm"] == pytest.approx(np.sqrt((S[1:3] * freq[1:3] ** 2 * coth).sum()))
-    assert summarize(freq, S, valid, freq_scale=0.95)["omega_eff_cm"] == pytest.approx(0.95 * s["omega_eff_cm"])
     assert summarize(freq, S * 4, valid)["strong_low_modes"] == [{"freq_cm": 200.0, "S": 2.0}]
 
 
@@ -869,7 +874,7 @@ def test_vibronic_gradient_matches_finite_differences(tmp_path, method):
     from pyscf import dft, gto
     from pyscf.hessian import thermo
 
-    from eecc.qm.vibronic import _compute, huang_rhys
+    from eecc.qm.vibronic import _compute, _masses_amu, huang_rhys
 
     geo = tmp_path / "x.xyz"
     save_xyz(_stacked_dimer(), str(geo))
@@ -878,7 +883,8 @@ def test_vibronic_gradient_matches_finite_differences(tmp_path, method):
     res = huang_rhys(FORMALDEHYDE.symbols, FORMALDEHYDE.coords, data["hessian"],
                      data["grad_excited"] - data["grad_ground"])
     mol = gto.M(atom=FORMALDEHYDE.pyscf_atoms(), basis="6-31g", unit="Angstrom", verbose=0)
-    ref = np.sort(np.real(thermo.harmonic_analysis(mol, data["hessian"])["freq_wavenumber"]))
+    ref = np.sort(np.real(thermo.harmonic_analysis(mol, data["hessian"],
+                                                   mass=_masses_amu(FORMALDEHYDE.symbols))["freq_wavenumber"]))
     assert np.allclose(res["freq_cm"], ref, atol=0.1)
 
     from eecc.qm.vibronic import normal_modes
@@ -933,7 +939,24 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     pipe.run()
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
     assert res["fragments"][0]["vibronic"]["cutoff_cm"] == 100.0
-    assert pipe.is_done("diabatize") and pipe.restamp()[-1] == "vibronic"
+    assert pipe.is_done("diabatize")
+    assert pipe.restamp()[-2:] == ["vibronic", "diabatize"] and pipe.is_done("diabatize")
+
+    # --force recomputes the quantum chemistry instead of reusing vibronic.npz
+    calls = []
+    monkeypatch.setattr(vibronic, "_compute", lambda *a, **k: calls.append(1) or dict(
+        np.load(os.path.join(pipe.stage_dir("vibronic", "frag1"), "vibronic.npz"))))
+    pipe.run(stage="vibronic", fragment=1, force=True)
+    assert calls == [1] and not pipe.is_done("diabatize")
+    # with the stage disabled, running it by hand leaves the diabatization alone
+    pipe.run_diabatize()
+    marker = os.path.join(pipe.stage_dir("diabatize"), ".done")
+    assert os.path.exists(marker)
+    pipe.cfg.vibronic.enabled = False
+    pipe.run(stage="vibronic", fragment=1, force=True)
+    assert os.path.exists(marker)
+    with pytest.raises(ValueError, match="min_frequency"):
+        _small_config(tmp_path, geo, vibronic={"min_frequency": 0.0})
 
 
 def test_slurm_jobs_for_vibronic_stage(tmp_path, monkeypatch):

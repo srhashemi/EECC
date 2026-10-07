@@ -22,8 +22,9 @@ from eecc.qm.structure import (
 
 # Stage directories are numbered in this order; new stages go at the end so existing work dirs keep their names.
 STAGES = ("opt", "fragments", "td", "transition", "couplings", "system", "diabatize", "vibronic")
-# Order in which 'all' runs the stages (diabatize copies the vibronic parameters, so it comes last).
-RUN_ORDER = ("opt", "fragments", "td", "transition", "vibronic", "couplings", "system", "diabatize")
+# Order in which 'all' runs the stages: the optional, slow vibronic stage after the core results, and
+# diabatize last because it copies the vibronic parameters.
+RUN_ORDER = ("opt", "fragments", "td", "transition", "couplings", "system", "vibronic", "diabatize")
 # Stages whose results each stage uses (a rerun invalidates everything that depends on it).
 DEPENDS = {
     "fragments": ("opt",), "td": ("fragments",), "transition": ("td",), "couplings": ("transition",),
@@ -87,7 +88,9 @@ class Pipeline:
         if stage == "fragments":
             return h
         if stage == "vibronic":  # the td method and state, not the td results
-            return _combine(h, cfg.section_hash("td"), cfg.section_hash("vibronic", ignore=("enabled",)))
+            from eecc.qm.vibronic import TD_UNUSED
+            return _combine(h, cfg.section_hash("td", ignore=TD_UNUSED),
+                            cfg.section_hash("vibronic", ignore=("enabled",)))
         h = _combine(h, cfg.section_hash("td"))
         if stage == "td":
             return h
@@ -111,6 +114,8 @@ class Pipeline:
         A rerun (for example with --force) may produce different results under the
         same settings, so stages built on the previous results must run again.
         """
+        if stage == "vibronic" and not self.cfg.vibronic.enabled:
+            return  # diabatize uses the vibronic results only when the stage is enabled
         dependents, grew = {stage}, True
         while grew:
             new = {s for s, deps in DEPENDS.items() if dependents.intersection(deps)} - dependents
@@ -274,9 +279,10 @@ class Pipeline:
             raise RuntimeError("run the 'fragments' stage first")
         from eecc.qm.vibronic import run_vibronic
         t0 = time.time()
+        # the td SCF as a guess only once that stage is finished (under Slurm it may still be writing)
+        chk = os.path.join(self.stage_dir("td", fragment), "scf.chk") if self.is_done("td", fragment) else None
         out = run_vibronic(self.load_fragment_structure(fragment), self.cfg, self.stage_dir("vibronic", fragment),
-                           fragment, self._fragment_charge(fragment),
-                           guess_chk=os.path.join(self.stage_dir("td", fragment), "scf.chk"), log=self.log)
+                           fragment, self._fragment_charge(fragment), guess_chk=chk, log=self.log, force=force)
         s = out["summary"]
         eff = f"S_eff = {s['S_eff']:.3f} at {s['omega_eff_cm']:.0f} cm-1" if s["omega_eff_cm"] else "no high modes"
         self.log(f"[vibronic] {fragment}: {eff}, reorganization {s['reorganization_eV']:.4f} eV, "
@@ -368,7 +374,11 @@ class Pipeline:
         first stage whose outputs are missing.
         """
         marked = []
-        for st in STAGES:
+        for st in RUN_ORDER:
+            optional = {"system": self.cfg.system.enabled, "diabatize": self.cfg.system.enabled,
+                        "vibronic": self.cfg.vibronic.enabled}
+            if not optional.get(st, True):
+                continue
             if st in PER_FRAGMENT:
                 if not os.path.exists(os.path.join(self.stage_dir("fragments"), "fragments.json")):
                     break
