@@ -163,21 +163,17 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
     td_cfg, vc = cfg.td, cfg.vibronic
     os.makedirs(workdir, exist_ok=True)
     raw = os.path.join(workdir, "vibronic.npz")
+    partial = os.path.join(workdir, PARTIAL)
     key = calc_key(cfg, structure, charge)
-    data = None
-    if os.path.exists(raw) and not force:
-        try:
-            with np.load(raw) as z:
-                if str(z["calc_key"]) == key:
-                    data = {k: z[k] for k in z.files}
-        except (OSError, ValueError, KeyError):  # unreadable (e.g. a killed job): compute again
-            data = None
+    data = None if force else _load_npz(raw, key)
     if data is None:
-        data = _compute(structure, cfg, workdir, name, charge, guess_chk, log)
+        if force and os.path.exists(partial):
+            os.remove(partial)
+        data = _compute(structure, cfg, workdir, name, charge, guess_chk, log, key)
         data["calc_key"] = np.array(key)
-        tmp = raw + ".tmp.npz"
-        np.savez_compressed(tmp, **data)
-        os.replace(tmp, raw)  # never leave a half-written file under the final name
+        _save_npz(raw, data)
+        if os.path.exists(partial):
+            os.remove(partial)
 
     res = huang_rhys(structure.symbols, structure.coords, data["hessian"],
                      data["grad_excited"] - data["grad_ground"], vc.min_frequency, vc.freq_scale)
@@ -202,6 +198,48 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
 # td settings that the vibronic calculation does not use (it runs its own response on the SCF grid)
 TD_UNUSED = ("response_grid", "davidson_tol")
 
+# gradients and excitation energy, saved before the Hessian so a killed job does not repeat them
+PARTIAL = "vibronic_partial.npz"
+
+
+def _load_npz(path: str, key: str) -> Optional[Dict[str, np.ndarray]]:
+    """Contents of *path* if it holds the calculation *key*, else None."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with np.load(path) as z:
+            if str(z["calc_key"]) == key:
+                return {k: z[k] for k in z.files}
+    except (OSError, ValueError, KeyError, EOFError):  # unreadable (e.g. a killed job): compute again
+        pass
+    return None
+
+
+def _save_npz(path: str, data: Dict[str, Any]) -> None:
+    tmp = path + ".tmp.npz"
+    np.savez_compressed(tmp, **data)
+    os.replace(tmp, path)  # never leave a half-written file under the final name
+
+
+def eri_incore(mode: str, nao: int, memory_mb: float, hessian: bool) -> Optional[bool]:
+    """Keep the two-electron integrals (nao^4 bytes with 8-fold symmetry) in memory?
+
+    True/False forces it; None leaves PySCF's choice (in memory if they fit). auto: PySCF's
+    choice for the SCF, TDDFT and gradients; for the Hessian, which needs much memory of its
+    own, only if they take at most half of *memory_mb*.
+    """
+    if mode == "auto":
+        return (nao ** 4 / 1e6 <= 0.5 * memory_mb) if hessian else None
+    return mode == "incore"
+
+
+def _set_eri(mf, incore: Optional[bool]) -> None:
+    if incore is False:
+        mf._eri = None  # release the array if the SCF built one
+        mf._is_mem_enough = lambda: False  # PySCF then never builds it
+    elif incore:
+        mf.mol.incore_anyway = True
+
 
 def calc_key(cfg, structure: Structure, charge: int) -> str:
     """Identifies the quantum-chemical calculation (not the summary settings).
@@ -219,36 +257,54 @@ def calc_key(cfg, structure: Structure, charge: int) -> str:
     return hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:16]
 
 
-def _compute(structure, cfg, workdir, name, charge, guess_chk, log) -> Dict[str, np.ndarray]:
+def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "") -> Dict[str, np.ndarray]:
     td_cfg = cfg.td
     log = log or (lambda *a: None)
+    partial_path = os.path.join(workdir, PARTIAL)
+    partial = _load_npz(partial_path, key) if key else None
     mol = build_mol(structure, td_cfg.basis, td_cfg.cart, charge, 0, cfg.resources.memory_mb,
                     output=os.path.join(workdir, "vibronic.log"))
+    own_chk = os.path.join(workdir, "scf.chk")
     mf = build_rks(mol, td_cfg.xc, td_cfg.grid, td_cfg.density_fit, td_cfg.conv_tol,
-                   disp=None, chkfile=os.path.join(workdir, "scf.chk"))
+                   disp=None, chkfile=own_chk)
+    _set_eri(mf, eri_incore(cfg.vibronic.eri, mol.nao, cfg.resources.memory_mb, hessian=False))
     dm0 = None
-    if guess_chk and os.path.exists(guess_chk):
-        try:  # only a guess: any problem with the file just means the default guess
-            dm0 = mf.from_chk(guess_chk)
-        except Exception as exc:  # noqa: BLE001 (h5py raises various errors on a busy or partial file)
-            log(f"[vibronic] {name}: ignoring the td checkpoint as a guess ({exc})")
+    # a killed run of the same calculation left its own SCF checkpoint: the best guess
+    for chk in ([own_chk] if partial is not None else []) + [guess_chk]:
+        if chk and os.path.exists(chk):
+            try:  # only a guess: any problem with the file just means the next or default guess
+                dm0 = mf.from_chk(chk)
+                break
+            except Exception as exc:  # noqa: BLE001 (h5py raises various errors on a busy or partial file)
+                log(f"[vibronic] {name}: ignoring {chk} as a guess ({exc})")
     mf.kernel(dm0=dm0)
     if not mf.converged:
         raise RuntimeError(f"{name}: SCF did not converge")
-    g0 = mf.nuc_grad_method().kernel()
 
-    # The SCF grid also for the response: gradients need the response on the grid of the SCF.
-    td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
-    td.nstates = td_cfg.nstates
-    td.conv_tol = cfg.vibronic.davidson_tol
-    td.kernel()
-    k = td_cfg.state - 1
-    if not np.atleast_1d(td.converged)[k]:
-        raise RuntimeError(f"{name}: TDDFT state {td_cfg.state} did not converge")
-    e_exc = float(td.e[k]) * HARTREE_TO_EV
-    log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV; excited-state gradient")
-    g1 = td.nuc_grad_method().kernel(state=td_cfg.state)
-    log(f"[vibronic] {name}: ground-state Hessian ({mol.natm} atoms, {mol.nao} basis functions)")
+    if partial is not None:
+        g0, g1, e_exc = partial["grad_ground"], partial["grad_excited"], float(partial["excitation_eV"])
+        log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV and gradients from {PARTIAL}")
+    else:
+        g0 = mf.nuc_grad_method().kernel()
+        # The SCF grid also for the response: gradients need the response on the grid of the SCF.
+        td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
+        td.nstates = td_cfg.nstates
+        td.conv_tol = cfg.vibronic.davidson_tol
+        td.kernel()
+        k = td_cfg.state - 1
+        if not np.atleast_1d(td.converged)[k]:
+            raise RuntimeError(f"{name}: TDDFT state {td_cfg.state} did not converge")
+        e_exc = float(td.e[k]) * HARTREE_TO_EV
+        log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV; excited-state gradient")
+        g1 = td.nuc_grad_method().kernel(state=td_cfg.state)
+        if key:
+            _save_npz(partial_path, {"calc_key": np.array(key), "grad_ground": np.asarray(g0),
+                                     "grad_excited": np.asarray(g1), "excitation_eV": np.array(e_exc)})
+    incore = eri_incore(cfg.vibronic.eri, mol.nao, cfg.resources.memory_mb, hessian=True)
+    _set_eri(mf, incore)
+    held = mf._eri is not None or incore
+    log(f"[vibronic] {name}: ground-state Hessian ({mol.natm} atoms, {mol.nao} basis functions, "
+        f"integrals {'in memory' if held else 'direct'})")
     hess = mf.Hessian().kernel()
     return {"hessian": np.asarray(hess), "grad_ground": np.asarray(g0), "grad_excited": np.asarray(g1),
             "excitation_eV": np.array(e_exc), "symbols": np.array(structure.symbols),

@@ -911,6 +911,51 @@ def test_vibronic_gradient_matches_finite_differences(tmp_path, method):
     assert out_of_plane and all(res["S"][i] < 1e-8 for i in out_of_plane)  # symmetry: not displaced
 
 
+def test_vibronic_eri_choice():
+    from eecc.qm.vibronic import eri_incore
+
+    assert eri_incore("auto", 640, 200000, hessian=False) is None  # PySCF's choice before the Hessian
+    assert eri_incore("auto", 100, 16000, hessian=True)  # 0.1 GB
+    assert not eri_incore("auto", 640, 200000, hessian=True)  # 168 GB of 200 GB: the Hessian would not fit
+    assert eri_incore("incore", 640, 1000, hessian=True) and eri_incore("direct", 10, 1e9, hessian=False) is False
+
+
+def test_vibronic_resumes_after_a_killed_hessian(tmp_path, monkeypatch):
+    """Gradients are saved before the Hessian; a rerun (here with direct integrals) skips them."""
+    from pyscf.grad import rks as grad_rks
+    from pyscf.hessian import rks as hess_rks
+
+    from eecc.qm import vibronic
+
+    geo = tmp_path / "x.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, td={"basis": "6-31g", "xc": "b3lyp", "method": "tda", "nstates": 3})
+    cfg.vibronic.eri = "incore"
+    ref = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "ref"), "h2co")
+    ref_raw = dict(np.load(tmp_path / "ref" / "vibronic.npz"))
+    assert not os.path.exists(tmp_path / "ref" / vibronic.PARTIAL)
+
+    work = str(tmp_path / "run")
+    cfg.vibronic.eri = "direct"
+    hess_kernel = hess_rks.Hessian.kernel
+    monkeypatch.setattr(hess_rks.Hessian, "kernel", lambda self, *a, **k: (_ for _ in ()).throw(MemoryError("killed")))
+    with pytest.raises(MemoryError):
+        vibronic.run_vibronic(FORMALDEHYDE, cfg, work, "h2co")
+    assert os.path.exists(os.path.join(work, vibronic.PARTIAL))
+    assert not os.path.exists(os.path.join(work, "vibronic.npz"))
+
+    monkeypatch.setattr(hess_rks.Hessian, "kernel", hess_kernel)
+    monkeypatch.setattr(grad_rks.Gradients, "kernel", lambda *a, **k: pytest.fail("recomputed a gradient"))
+    out = vibronic.run_vibronic(FORMALDEHYDE, cfg, work, "h2co")
+    raw = dict(np.load(os.path.join(work, "vibronic.npz")))
+    assert not os.path.exists(os.path.join(work, vibronic.PARTIAL))
+    # direct == in-memory integrals, up to integral screening and SCF convergence (~1e-5 relative)
+    assert np.allclose(raw["hessian"], ref_raw["hessian"], rtol=1e-4, atol=1e-5)
+    assert np.allclose(raw["grad_excited"], ref_raw["grad_excited"], atol=1e-6)
+    assert np.allclose(out["modes"]["freq_cm"], ref["modes"]["freq_cm"], atol=0.1)
+    assert out["summary"]["S_eff"] == pytest.approx(ref["summary"]["S_eff"], rel=1e-3)
+
+
 def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     """vibronic stage per fragment, its parameters in diabatic.json, and cheap reruns of the summary."""
     from eecc.qm import vibronic

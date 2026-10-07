@@ -134,6 +134,7 @@ class VibronicConfig:
     freq_scale: float = 1.0  # scales the reported frequencies (not S)
     min_frequency: float = 50.0  # cm-1; lower (and imaginary) modes get no S
     davidson_tol: float = 1e-6  # TDDFT convergence for the excited-state gradient
+    eri: str = "auto"  # two-electron integrals: incore, direct, or auto (Hessian incore if <= half of memory_mb)
 
 
 @dataclass
@@ -390,6 +391,8 @@ def validate(cfg: PipelineConfig) -> None:
     if min(v.cutoff, v.freq_scale, v.min_frequency, v.davidson_tol) <= 0 or v.temperature < 0:
         raise ValueError("vibronic: cutoff, freq_scale, min_frequency and davidson_tol must be positive; "
                          "temperature must be >= 0")
+    if v.eri not in ("auto", "incore", "direct"):
+        raise ValueError("vibronic.eri must be 'auto', 'incore' or 'direct'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
         raise ValueError("transition.cube spacing and margin must be positive")
 

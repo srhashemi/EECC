@@ -93,6 +93,9 @@ HELP: Dict[str, str] = {
     "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled",
     "vibronic.min_frequency": "cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³)",
     "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (tighter than td.davidson_tol)",
+    "vibronic.eri": "two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) "
+                    "or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take "
+                    "at most half of resources.memory_mb",
     "resources.threads": "threads; 0: OMP_NUM_THREADS or all cores",
     "resources.memory_mb": "PySCF memory (MB)",
     "resources.tmpdir": "PySCF scratch directory; null: default",

@@ -90,7 +90,7 @@ class Pipeline:
         if stage == "vibronic":  # the td method and state, not the td results
             from eecc.qm.vibronic import TD_UNUSED
             return _combine(h, cfg.section_hash("td", ignore=TD_UNUSED),
-                            cfg.section_hash("vibronic", ignore=("enabled",)))
+                            cfg.section_hash("vibronic", ignore=("enabled", "eri")))
         h = _combine(h, cfg.section_hash("td"))
         if stage == "td":
             return h
