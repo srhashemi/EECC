@@ -184,7 +184,9 @@ projected into the orbitals of the whole system and fitted as combinations of
 its states. The result, `<workdir>/07_diabatize/diabatic.txt`, is the exciton
 Hamiltonian: site and CT energies, and *total* couplings, which include
 exchange, overlap, polarization and CT mixing, listed next to the Coulomb
-couplings. A completeness below about 0.8 means `system.nstates` (default: four
+couplings. It also lists the transition dipole and oscillator strength of each
+diabatic state, so `diabatic.json` is a complete exciton model, for example for
+spectra. A completeness below about 0.8 means `system.nstates` (default: four
 per fragment) is too small to describe that state. LE + CT needs n² states for
 n fragments (the default covers up to four); with fewer, the stage fits the LE
 states only and says so in `diabatic.txt`.

@@ -37,3 +37,4 @@ E2_4PI_EPS0_eVA = 14.3996454784255  # eV·Å (same as KE_EV_ANG, higher precisio
 C_m_to_Debye = 1 / (3.33564e-30)
 EANG_TO_DEBYE = 4.80320427       # 1 e·Å = 4.8032 D
 DEBYE_PER_EANG = 4.80320427      # same constant, used in tdc_cube
+AU_TO_DEBYE = 2.541746473        # 1 e·a0 = 2.5417 D

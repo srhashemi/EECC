@@ -596,8 +596,32 @@ def test_diabatization_recovers_fragment_states_and_davydov_coupling(tmp_path):
     # (the Davydov pair), so its coupling is half their splitting
     pair = np.argsort(-np.sum(res.D ** 2, axis=1))[:2]
     assert np.allclose(np.linalg.eigvalsh(res.H_eV), np.sort(E[pair]), atol=0.02)
+    # with the adiabatic states themselves as targets, dipoles and f are PySCF's (checks units and prefactor)
+    from eecc.qm.diabatize import diabatic_dipoles, diabatic_oscillator_strengths, diabatize
+    ident = diabatize(x + y, E, x + y, [str(i) for i in range(len(E))])
+    mu_id = diabatic_dipoles(ident, td.transition_dipole())
+    assert np.allclose(np.abs(mu_id), np.abs(td.transition_dipole()), atol=1e-6)
+    assert np.allclose(diabatic_oscillator_strengths(ident, mu_id), td.oscillator_strength(), atol=1e-6)
     res_ct = diabatize_from_pipeline(pipe, mol, mf.mo_coeff, mf.mo_occ, x, y, E, include_ct=True)
     assert res_ct.H_eV.shape == (4, 4) and res_ct.labels[2] == "CT(frag1->frag2)"
+
+
+def test_diabatic_dipoles_rotate_with_the_states():
+    """mu_k = sum_I D_Ik mu_I: a permutation of the states permutes the dipoles, a rotation keeps sum |mu|^2."""
+    from eecc.qm.diabatize import diabatic_dipoles, diabatize
+
+    rng = np.random.default_rng(1)
+    A = np.linalg.qr(rng.normal(size=(12, 4)))[0].T.reshape(4, 3, 4)  # orthonormal adiabatic amplitudes
+    E, mu = np.array([1.0, 1.2, 1.5, 2.0]), rng.normal(size=(4, 3))
+    res = diabatize(A, E, A[[2, 0, 3, 1]], list("abcd"))
+    assert np.allclose(diabatic_dipoles(res, mu), mu[[2, 0, 3, 1]])
+    R = np.linalg.qr(rng.normal(size=(4, 4)))[0]
+    res = diabatize(A, E, np.einsum("kI,Iab->kab", R, A), list("abcd"))
+    mu_d = diabatic_dipoles(res, mu)
+    assert np.allclose(mu_d, R @ mu) and np.isclose(np.sum(mu_d ** 2), np.sum(mu ** 2))
+    assert np.allclose(np.linalg.eigvalsh(res.H_eV), E)
+    with pytest.raises(ValueError, match="one transition dipole"):
+        diabatic_dipoles(res, mu.T[:, :3])
 
 
 def test_system_stage_dependencies_and_hashes(tmp_path):
@@ -695,11 +719,40 @@ def test_pipeline_with_system_stage(tmp_path):
     pipe.run()
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and min(res["completeness"]) > 0.9
+    # diabatic transition dipoles: equal for the two sites of the symmetric dimer and close to the
+    # fragment's (here a dark state, so an absolute tolerance)
+    mu = np.linalg.norm(res["transition_dipoles_au"], axis=1)
+    mu_frag = np.linalg.norm(json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json")))["selected"]["mu_au"])
+    assert abs(mu[0] - mu[1]) < 1e-3 * mu[0] + 1e-4 and abs(mu[0] - mu_frag) < 0.15 * mu_frag + 0.01
+    assert len(res["oscillator_strengths"]) == 2 and "Transition dipoles of the diabatic states" in \
+        open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
     pair = res["pairs"][0]
     assert {"J_total_cm-1", "tresp_cm-1", "tdc_direct_cm-1"} <= set(pair)
     assert "Total coupling (this stage) vs Coulomb" in open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
     assert pipe.is_done("system") and pipe.is_done("diabatize")
     assert all(s["converged"] for s in json.load(open(os.path.join(pipe.stage_dir("system"), "system_td.json")))["states"])
+
+    # results of the previous output format (no diabatic dipoles; system_td.json without 'converged'):
+    # not current anywhere (is_done, restamp), and rerun without errors
+    import eecc.qm.pipeline as pipeline_module
+    path = os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")
+    old = {k: v for k, v in json.load(open(path)).items() if k not in ("transition_dipoles_au", "oscillator_strengths")}
+    json.dump(old, open(path, "w"))
+    spath = os.path.join(pipe.stage_dir("system"), "system_td.json")
+    sys_td = json.load(open(spath))
+    for st in sys_td["states"]:
+        del st["converged"]
+    json.dump(sys_td, open(spath, "w"))
+    fmt = pipeline_module.DIABATIZE_FORMAT
+    try:
+        pipeline_module.DIABATIZE_FORMAT = "1"
+        pipe._mark_done("diabatize")
+    finally:
+        pipeline_module.DIABATIZE_FORMAT = fmt
+    assert not pipe.is_done("diabatize") and not pipe._outputs_present("diabatize")
+    assert "diabatize" not in pipe.restamp()
+    pipe.run_diabatize()
+    assert "transition_dipoles_au" in json.load(open(path)) and pipe.is_done("diabatize")
 
     # too few system states for LE + CT: fall back to LE only instead of failing after the system run
     from eecc.qm.diabatize import diabatize_from_pipeline

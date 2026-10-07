@@ -30,6 +30,8 @@ from typing import List, Sequence
 
 import numpy as np
 
+from eecc.constants import AU_TO_DEBYE, HARTREE_TO_EV
+
 
 @dataclass
 class DiabaticResult:
@@ -87,10 +89,47 @@ def diabatize(Z_adiabatic: np.ndarray, E_adiabatic: np.ndarray, Z_diabatic: np.n
     return DiabaticResult(list(labels), 0.5 * (H + H.T), completeness, D)
 
 
+def diabatic_dipoles(res: DiabaticResult, tdm_adiabatic: np.ndarray) -> np.ndarray:
+    """Transition dipoles of the diabatic states, mu_k = sum_I D_Ik mu_I (n_diabatic x 3).
+
+    *tdm_adiabatic* holds the transition dipoles of the adiabatic states that were
+    diabatized, in the same order. A state's phase enters both D_Ik and mu_I, so the
+    result is independent of the adiabatic phases; its sign follows the fragment
+    state, like the couplings.
+    """
+    tdm = np.asarray(tdm_adiabatic)
+    if tdm.shape != (res.D.shape[0], 3):
+        raise ValueError(f"need one transition dipole (3 components) per adiabatic state: expected "
+                         f"{(res.D.shape[0], 3)}, got {tdm.shape}")
+    return res.D.T @ tdm
+
+
+def diabatic_oscillator_strengths(res: DiabaticResult, mu: np.ndarray) -> np.ndarray:
+    """f_k = 2/3 E_k |mu_k|^2 (atomic units), with E_k the diabatic energy (diagonal of H)."""
+    return 2.0 / 3.0 * np.diag(res.H_eV) / HARTREE_TO_EV * np.sum(np.asarray(mu) ** 2, axis=1)
+
+
+def format_dipoles(res: DiabaticResult, mu: np.ndarray, osc: np.ndarray) -> str:
+    """Readable table of the diabatic transition dipoles (au), their length (Debye) and f.
+
+    States with completeness below 0.8 are marked: their dipoles are not reliable.
+    """
+    w = _label_width(res.labels)
+    lines = ["Transition dipoles of the diabatic states (au) and oscillator strengths:"]
+    for lab, m, f, c in zip(res.labels, mu, osc, res.completeness):
+        lines.append(f"  {lab:<{w}s} {m[0]:9.4f} {m[1]:9.4f} {m[2]:9.4f}   |mu| {np.linalg.norm(m) * AU_TO_DEBYE:7.3f} D"
+                     f"   f {f:7.4f}" + ("   (completeness < 0.8)" if c < 0.8 else ""))
+    return "\n".join(lines)
+
+
+def _label_width(labels: Sequence[str]) -> int:
+    return max(10, *(len(l) for l in labels))
+
+
 def format_hamiltonian(res: DiabaticResult, ev_to_cm: float = 8065.544006) -> str:
     """Readable table: diagonal in eV, off-diagonal couplings in cm^-1."""
     n = len(res.labels)
-    w = max(10, *(len(l) for l in res.labels))
+    w = _label_width(res.labels)
     lines = ["Diabatic energies (eV) and completeness:"]
     for k, lab in enumerate(res.labels):
         lines.append(f"  {lab:<{w}s} {res.H_eV[k, k]:9.4f}   {res.completeness[k]:6.3f}")

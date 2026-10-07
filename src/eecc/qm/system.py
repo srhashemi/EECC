@@ -17,11 +17,9 @@ from typing import Any, Callable, Dict
 
 import numpy as np
 
-from eecc.constants import EV_TO_CM, HARTREE_TO_EV
+from eecc.constants import AU_TO_DEBYE, EV_TO_CM, HARTREE_TO_EV
 from eecc.qm.pyscf_setup import build_mol, build_rks
 from eecc.qm.structure import Structure, read_xyz, save_xyz
-
-AU_TO_DEBYE = 2.541746473
 
 
 def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
@@ -96,7 +94,8 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
 
 def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     """Diabatize the system states onto the fragments of *pipe*; writes diabatic.json/.txt."""
-    from eecc.qm.diabatize import diabatize_from_pipeline, format_hamiltonian
+    from eecc.qm.diabatize import (diabatic_dipoles, diabatic_oscillator_strengths, diabatize_from_pipeline,
+                                   format_dipoles, format_hamiltonian)
 
     cfg = pipe.cfg
     sys_dir = pipe.stage_dir("system")
@@ -114,6 +113,11 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
         pipe.log("[diabatize] " + notes[-1][2:])
     res = diabatize_from_pipeline(pipe, mol, data["mo_coeff"], data["mo_occ"], data["x"], data["y"],
                                   data["energies_eV"], include_ct=include_ct)
+    states = json.load(open(os.path.join(sys_dir, "system_td.json")))["states"]
+    # results older than the 'converged' flag: the system stage then refused unconverged states
+    unconverged = [i + 1 for i, s in enumerate(states) if not s.get("converged", True)]
+    if unconverged:  # kept by the system stage; they enter the energies, couplings and dipoles below
+        notes.append(f"# NOTE: system TDDFT states {unconverged} did not converge; they are used here")
 
     coulomb = {}
     cpath = os.path.join(pipe.stage_dir("couplings"), "couplings.json")
@@ -129,15 +133,20 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
             entry.update({f"{m}_cm-1": v for m, v in coulomb.get((a, names[j]), {}).items()})
             pairs.append(entry)
 
+    # transition dipoles of the diabatic states (with the Hamiltonian, a complete exciton model)
+    mu = diabatic_dipoles(res, data["tdm_au"])
+    osc = diabatic_oscillator_strengths(res, mu)
+
     os.makedirs(workdir, exist_ok=True)
     result = {"labels": res.labels, "H_eV": res.H_eV.tolist(), "completeness": res.completeness.tolist(),
+              "transition_dipoles_au": mu.tolist(), "oscillator_strengths": osc.tolist(),
               "adiabatic_eV": data["energies_eV"].tolist(), "pairs": pairs}
     with open(os.path.join(workdir, "diabatic.json"), "w") as f:
         json.dump(result, f, indent=2)
 
     lines = ["# Exciton Hamiltonian from the whole-system TDDFT (diabatization onto fragment states)",
              "# Adiabatic states (eV): " + ", ".join(f"{e:.4f}" for e in data["energies_eV"]), "",
-             *notes, format_hamiltonian(res, EV_TO_CM), ""]
+             *notes, format_hamiltonian(res, EV_TO_CM), "", format_dipoles(res, mu, osc), ""]
     low = [l for l, c in zip(res.labels, res.completeness) if c < 0.8]
     if low:
         lines.append(f"# WARNING: completeness < 0.8 for {low}; increase system.nstates "

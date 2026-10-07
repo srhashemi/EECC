@@ -15,9 +15,9 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
-from eecc.constants import A0_TO_ANG
+from eecc.constants import A0_TO_ANG, AU_TO_DEBYE
 from eecc.io.charges import write_charges_txt
-from eecc.qm.excited import AU_TO_DEBYE, dipole_from_density_matrix, load_excited_states
+from eecc.qm.excited import dipole_from_density_matrix, load_excited_states
 from eecc.qm.pyscf_setup import build_mol
 from eecc.qm.structure import Structure
 
