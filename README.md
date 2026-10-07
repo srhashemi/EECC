@@ -269,9 +269,11 @@ is also written to `diabatic.json` (`fragments[].vibronic`). Changing only the
 summary settings (`cutoff`, `temperature`, `freq_scale`, `min_frequency`) reuses the
 Hessian and gradient stored in `vibronic.npz`.
 
-The Hessian dominates the cost, typically as long as the `td` stage or longer; with
+The Hessian dominates the cost (for a 65-atom BODIPY fragment 7.5 h of 10.9 h on a
+full node, see [Validation](#vibronic-parameters-against-experiment)); with
 `--slurm` the vibronic stage runs as its own array job (`slurm.time_vibronic`) in
-parallel with the fragment TDDFT.
+parallel with the fragment TDDFT. `vibronic.response_grid: [75, 302]` halves the
+TDDFT part for a small change in the weakest modes.
 
 Memory: holding the two-electron integrals in memory takes about nao⁴ bytes (168 GB
 at 640 basis functions), and the Hessian needs more on top. `vibronic.eri: auto`
@@ -354,6 +356,36 @@ below the end sites. The 4 × 4 tetramer Hamiltonian reproduces the four lowest
 whole-system states within 4 meV. With the isolated-fragment site energies,
 Coulomb couplings place the trimer S1 0.2 eV too high, so the site energies
 matter more than the couplings.
+
+### Vibronic parameters against experiment
+
+BODIPY monomer (fragment 1 of the dimer with its cap, 65 atoms; ωB97X-D/6-31G(d),
+full TDDFT S1) against its absorption and emission in toluene (Schaefer et al.,
+Nat. Commun. 15 (2024), source data). The band shapes are computed from the modes
+(displaced oscillators at 295 K); only the 0–0 energy and one Gaussian width, which
+stands in for the modes left out, are fitted. Scale 1 means the computed S fit as
+they are:
+
+| Modes taken from the calculation | Absorption: best scale on all S | Emission: best scale on all S |
+|---|---|---|
+| all | 0.43 | 0.60 |
+| ≥ 150 cm⁻¹ | 0.76 | 1.05 |
+| ≥ 400 cm⁻¹ | 0.99 | 1.35 |
+
+The high-frequency factors reproduce the measured vibronic structure without
+scaling (S_eff 0.16 at ω_eff 1321 cm⁻¹; the absorption shoulder at 2.6 eV). Two
+low-frequency torsions of the meso aryl group (62 and 129 cm⁻¹, S 1.1 and 1.7,
+flagged in `vibronic.txt`) are overestimated by the harmonic vertical-gradient
+model: they give a width of 610 cm⁻¹ where the spectra need about 230–290 cm⁻¹. When
+`vibronic.txt` warns about strong low-frequency modes, use S_eff and ω_eff with a
+width from experiment, or take `sigma_low` as an upper bound.
+
+Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6, Hessian
+7.5 h). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
+on 256 GB nodes `vibronic.eri: auto` recomputes them for the Hessian. The default
+Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
+`vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
+the summary values within 0.4 % and single weakly displaced modes within about 10 %.
 
 ## Working from cube or charge files
 
