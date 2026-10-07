@@ -326,7 +326,9 @@ Runs four coupling methods and prints a comparison table:
 - **TDC (direct)** — brute-force double summation (cross-check)
 
 The FFT solves the isolated problem (`--boundary free`, the default): the exact sum
-over all voxels, at any separation, in seconds. `--boundary periodic [--pad 3]`
+over all voxels at any separation, in seconds (when the two cubes lie on different
+grids, the potential is interpolated onto cube A's points). For cubes too large for
+its grid the FFT row reads nan and the direct sum is the result. `--boundary periodic [--pad 3]`
 reproduces the published workflow, whose periodic images distort the coupling,
 mildly for neighbours and strongly for distant pairs (BODIPY oligomer cubes):
 
@@ -337,7 +339,7 @@ mildly for neighbours and strongly for distant pairs (BODIPY oligomer cubes):
 | Tetramer 1–3 | 16.8 | −126.6 | −103.2 | −101.7 |
 | Tetramer 1–4 | 24.7 | −14.1 | −29.4 | −29.1 |
 
-The free FFT took 2–7 s per pair, the direct sum about 5 min. The direct sum
+The free FFT took about 1 s per pair (16 cores), the direct sum about 5 min. The direct sum
 drops voxels below the threshold and so comes out slightly low: on the dimer,
 thresholds of 0.0005, 0.0002, 0.0001 and 0.00005 give 967.2, 974.9, 977.4 and
 978.5 cm⁻¹, approaching the free FFT value.
@@ -469,7 +471,7 @@ Expected couplings (cm⁻¹; sign arbitrary):
 
 | Method | J |
 |--------|---|
-| TDC (FFT / direct) | 990 / 967 |
+| TDC (FFT free / periodic / direct) | 979 / 990 / 967 |
 | TrESP Coulomb (`--scale 1.4`) | 1141 |
 | TrMulliken Coulomb | 816 |
 
