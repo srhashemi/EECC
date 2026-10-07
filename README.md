@@ -213,6 +213,7 @@ meant to be read by other programs, for example for spectra:
 | `completeness` | how well the computed whole-system states reproduce each diabatic state (0–1) |
 | `fragments` | per fragment: `name`, `natoms_own`, `center_ang` (centre of mass, Å), `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal) and `moments_amu_ang2`, from the fragment's own atoms without caps; two equal moments (a symmetric top) leave the two axes free to rotate in their plane |
 | `adiabatic_eV`, `pairs` | whole-system excitation energies; per fragment pair, the total and the Coulomb couplings (cm⁻¹) |
+| `fragments[].vibronic` | with `vibronic.enabled`: the fragment's Holstein parameters (`S_eff`, `omega_eff_cm`, `sigma_low_cm`, reorganization energies; see [Vibronic parameters](#vibronic-parameters)) |
 
 All positions and vectors are in the frame of `system.xyz`. The phase of each
 diabatic state (LE or CT) is arbitrary, so signs of couplings and dipoles are
@@ -233,6 +234,44 @@ fragment is not exactly part of the whole system. To check a result you rely on,
 run again with about twice as many states in a separate `workdir` and compare
 the couplings in the two `diabatic.txt` files. If they agree, the first run had
 enough states.
+
+### Vibronic parameters
+
+With `vibronic.enabled: true` (or `eecc init --vibronic`) the optional **vibronic**
+stage gives each fragment the Huang–Rhys factors and frequencies of its `td.state`,
+the vibronic input of Frenkel–Holstein spectrum models. It uses the displaced
+harmonic oscillator model with the vertical-gradient method: at the fragment
+geometry it computes the ground-state Hessian (normal modes, frequencies ω_k) and
+the gradient of the excitation energy, with the `td` functional, basis and method.
+Projected onto mass-weighted mode k (component g_k), the gradient gives the
+dimensionless displacement and Huang–Rhys factor (atomic units)
+
+d_k = −g_k / ω_k^(3/2),  S_k = d_k² / 2,  reorganization energy λ = Σ S_k ω_k.
+
+The gradient of the excitation energy (excited minus ground state) is used rather
+than that of the excited state alone, so the fragment, cut from the optimized
+aggregate and not exactly at its own minimum, gets no spurious ground-state force,
+and the parameters belong to the geometry of the couplings. Modes below
+`vibronic.min_frequency` (and imaginary ones) get no S, as S_k grows as 1/ω³.
+
+A one-mode Holstein model needs one vibration, so the modes are also summarized:
+
+- modes at or above `vibronic.cutoff` (default 800 cm⁻¹; for π-conjugated dyes
+  mostly C=C/C–N ring stretches at 1200–1600 cm⁻¹, too closely spaced to resolve)
+  form one effective mode: S_eff = Σ S_k, ω_eff = Σ S_k ω_k / Σ S_k;
+- modes below it broaden the bands instead: Gaussian σ² = Σ S_k ω_k² coth(ω_k / 2kT).
+
+`<workdir>/08_vibronic/<fragment>/vibronic.json` lists every mode (ω_k, S_k, d_k)
+and the summary; `vibronic.txt` lists the summary and the most displaced modes and
+warns about low-frequency modes with S > 1 (large-amplitude distortions such as
+torsions, where one effective mode is too crude). With `system.enabled` the summary
+is also written to `diabatic.json` (`fragments[].vibronic`). Changing only the
+summary settings (`cutoff`, `temperature`, `freq_scale`, `min_frequency`) reuses the
+Hessian and gradient stored in `vibronic.npz`.
+
+The Hessian dominates the cost, typically as long as the `td` stage or longer; with
+`--slurm` the vibronic stage runs as its own array job (`slurm.time_vibronic`) in
+parallel with the fragment TDDFT.
 
 ## Validation
 
@@ -573,6 +612,12 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `system.nstates` | `0` | whole-system states; 0: four per fragment. LE + CT needs n² for n fragments |
 | `system.include_ct` | `true` | add HOMO→LUMO charge-transfer states between every fragment pair |
 | `system.memory_mb` | `null` | PySCF memory for the whole-system run (MB); null: resources.memory_mb |
+| `vibronic.enabled` | `false` | compute vibronic parameters (ground-state Hessian + excitation-energy gradient per fragment; about as long as the td stage or longer) |
+| `vibronic.cutoff` | `800.0` | cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width |
+| `vibronic.temperature` | `298.15` | K; temperature of the width from the low-frequency modes |
+| `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled |
+| `vibronic.min_frequency` | `50.0` | cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³) |
+| `vibronic.davidson_tol` | `1.0e-06` | TDDFT convergence for the excited-state gradient (tighter than td.davidson_tol) |
 | `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
 | `resources.memory_mb` | `16000` | PySCF memory (MB) |
 | `resources.tmpdir` | `null` | PySCF scratch directory; null: default |
@@ -592,6 +637,7 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `slurm.time_system` | `'24:00:00'` | time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h) |
 | `slurm.time_opt` | `'24:00:00'` | time limit of the optimization job |
 | `slurm.time_td` | `'12:00:00'` | time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores) |
+| `slurm.time_vibronic` | `'24:00:00'` | time limit of one fragment vibronic job (Hessian + excited-state gradient) |
 | `slurm.time_analysis` | `'02:00:00'` | time limit of the analysis and diabatize jobs |
 | `slurm.setup` | `[]` | shell lines run before eecc, e.g. ["module load python", "source venv/bin/activate"] |
 <!-- options:end -->
@@ -648,6 +694,7 @@ src/eecc/
     ├── couplings.py      # Pairwise couplings via the EECC methods
     ├── system.py         # Whole-system TDDFT and diabatization stages
     ├── diabatize.py      # Projection diabatization onto fragment LE/CT states
+    ├── vibronic.py       # Normal modes and Huang-Rhys factors (vibronic stage)
     ├── pipeline.py       # Restartable stage runner
     └── slurm.py          # Slurm job submission
 ```

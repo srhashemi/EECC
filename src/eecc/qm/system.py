@@ -96,6 +96,7 @@ UNITS = {"H_eV": "eV", "adiabatic_eV": "eV", "transition_dipoles_au": "e*bohr (a
          "oscillator_strengths": "dimensionless", "completeness": "dimensionless (0 to 1)",
          "fragments[].center_ang": "Angstrom", "fragments[].principal_axes": "unit vectors",
          "fragments[].moments_amu_ang2": "amu*Angstrom^2",
+         "fragments[].vibronic": "S dimensionless; *_cm in cm^-1, *_eV in eV, temperature_K in K",
          "pairs[].J_total_cm-1, pairs[].<method>_cm-1": "cm^-1"}
 CONVENTIONS = {
     "frame": "Cartesian frame of system.xyz (the whole-system geometry)",
@@ -187,6 +188,9 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
         n_own = len(meta[name]["parent_atoms_1based"])
         fragments.append({"name": name, "natoms_own": n_own,
                           **fragment_geometry(pipe.load_fragment_structure(name), n_own)})
+        if cfg.vibronic.enabled:  # one-mode Holstein parameters of the fragment's LE state
+            with open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")) as f:
+                fragments[-1]["vibronic"] = json.load(f)["summary"]
 
     from eecc.qm.pipeline import DIABATIZE_FORMAT
     os.makedirs(workdir, exist_ok=True)

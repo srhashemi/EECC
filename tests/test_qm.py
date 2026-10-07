@@ -464,7 +464,7 @@ def test_frequencies_and_maxsteps_do_not_invalidate_later_stages(tmp_path):
 
 
 def test_rerun_invalidates_dependent_stages(tmp_path):
-    from eecc.qm.pipeline import STAGES, Pipeline
+    from eecc.qm.pipeline import PER_FRAGMENT, STAGES, Pipeline
 
     geo = tmp_path / "dimer.xyz"
     save_xyz(_stacked_dimer(), str(geo))
@@ -652,14 +652,14 @@ def test_fragment_geometry_and_state_types():
 
 def test_system_stage_dependencies_and_hashes(tmp_path):
     """The whole-system run depends only on the geometry and TD method, not on the fragments."""
-    from eecc.qm.pipeline import STAGES, Pipeline
+    from eecc.qm.pipeline import PER_FRAGMENT, STAGES, Pipeline
 
     geo = tmp_path / "dimer.xyz"
     save_xyz(_stacked_dimer(), str(geo))
     pipe = Pipeline(_small_config(tmp_path, geo, system={"enabled": True}), log=lambda *a: None)
     def stamp_all():
         for st in STAGES:
-            for frag in (["frag1", "frag2"] if st in ("td", "transition") else [None]):
+            for frag in (["frag1", "frag2"] if st in PER_FRAGMENT else [None]):
                 os.makedirs(pipe.stage_dir(st, frag), exist_ok=True)
                 open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w").write(pipe.expected_hash(st) + "\n")
     stamp_all()
@@ -808,3 +808,154 @@ def test_pipeline_with_system_stage(tmp_path):
     txt = open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and "LE states only" in txt
     assert "tresp_cm-1" not in res["pairs"][0] and "couplings stage not finished" in txt
+
+
+# ============================================================
+# === Vibronic parameters ====================================
+# ============================================================
+
+FORMALDEHYDE = Structure(["C", "O", "H", "H"],
+                         np.array([[0, 0, 0], [0, 0, 1.21], [0, 0.94, -0.59], [0, -0.94, -0.59]], float))
+
+
+def test_huang_rhys_of_a_displaced_oscillator():
+    """Exact harmonic model: an excited state displaced by Delta gives S_k = omega_k (L_k . M^1/2 Delta)^2 / 2."""
+    from eecc.qm.vibronic import AMU_TO_ME, _masses_amu, huang_rhys, normal_modes
+
+    rng = np.random.default_rng(1)
+    st = FORMALDEHYDE
+    m = np.repeat(_masses_amu(st.symbols) * AMU_TO_ME, 3)
+    # a translation- and rotation-free mass-weighted Hessian with known frequencies (atomic units)
+    probe = normal_modes(st.symbols, st.coords, np.eye(12))  # any Hessian: gives the internal space
+    L0 = probe["modes"]
+    w_true = np.array([1200.0, 1300.0, 1600.0, 1800.0, 2900.0, 3000.0]) / 219474.6313632
+    Hm = L0 @ np.diag(w_true ** 2) @ L0.T
+    H = Hm * np.sqrt(np.outer(m, m))
+    nm = normal_modes(st.symbols, st.coords, H)
+    assert np.allclose(nm["omega_au"], w_true, rtol=1e-8)
+
+    delta = rng.normal(size=12) * 0.02  # Bohr; translations/rotations in it must not matter
+    delta += np.tile([0.3, -0.2, 0.1], 4)  # a pure translation
+    grad = -(H @ delta)  # gradient at x = 0 of 1/2 (x - delta)^T H (x - delta) - 1/2 x^T H x
+    res = huang_rhys(st.symbols, st.coords, H, grad.reshape(4, 3))
+    d_true = np.sqrt(w_true) * (nm["modes"].T @ (np.sqrt(m) * delta))
+    assert np.allclose(np.abs(res["d"]), np.abs(d_true), rtol=1e-8)
+    assert np.allclose(res["S"], d_true ** 2 / 2, rtol=1e-8)
+    assert np.allclose(res["freq_cm"], w_true * 219474.6313632)
+
+
+def test_vibronic_summary():
+    from eecc.qm.vibronic import KB_CM, summarize
+
+    freq = np.array([30.0, 200.0, 400.0, 1200.0, 1600.0])
+    S = np.array([5.0, 0.5, 0.2, 0.3, 0.6])
+    valid = freq >= 50
+    s = summarize(freq, S, valid, cutoff_cm=800, temperature_K=0.0)
+    assert s["S_eff"] == pytest.approx(0.9) and s["omega_eff_cm"] == pytest.approx((0.3 * 1200 + 0.6 * 1600) / 0.9)
+    assert s["reorganization_high_cm"] == pytest.approx(0.3 * 1200 + 0.6 * 1600)
+    assert s["reorganization_low_cm"] == pytest.approx(0.5 * 200 + 0.2 * 400)  # the 30 cm-1 mode is excluded
+    assert s["sigma_low_cm"] == pytest.approx(np.sqrt(0.5 * 200 ** 2 + 0.2 * 400 ** 2))
+    assert (s["n_high"], s["n_low"], s["n_excluded"]) == (2, 2, 1) and s["strong_low_modes"] == []
+    hot = summarize(freq, S, valid, cutoff_cm=800, temperature_K=300.0)
+    coth = 1 / np.tanh(freq[1:3] / (2 * KB_CM * 300))
+    assert hot["sigma_low_cm"] == pytest.approx(np.sqrt((S[1:3] * freq[1:3] ** 2 * coth).sum()))
+    assert summarize(freq, S, valid, freq_scale=0.95)["omega_eff_cm"] == pytest.approx(0.95 * s["omega_eff_cm"])
+    assert summarize(freq, S * 4, valid)["strong_low_modes"] == [{"freq_cm": 200.0, "S": 2.0}]
+
+
+@pytest.mark.parametrize("method", ["tda", "tddft"])
+def test_vibronic_gradient_matches_finite_differences(tmp_path, method):
+    """The projected excitation-energy gradient equals the slope of the excitation energy along each mode."""
+    from pyscf import dft, gto
+    from pyscf.hessian import thermo
+
+    from eecc.qm.vibronic import _compute, huang_rhys
+
+    geo = tmp_path / "x.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, td={"basis": "6-31g", "xc": "b3lyp", "method": method, "nstates": 3})
+    data = _compute(FORMALDEHYDE, cfg, str(tmp_path), "h2co", 0, None, None)
+    res = huang_rhys(FORMALDEHYDE.symbols, FORMALDEHYDE.coords, data["hessian"],
+                     data["grad_excited"] - data["grad_ground"])
+    mol = gto.M(atom=FORMALDEHYDE.pyscf_atoms(), basis="6-31g", unit="Angstrom", verbose=0)
+    ref = np.sort(np.real(thermo.harmonic_analysis(mol, data["hessian"])["freq_wavenumber"]))
+    assert np.allclose(res["freq_cm"], ref, atol=0.1)
+
+    from eecc.qm.vibronic import normal_modes
+    nm = normal_modes(FORMALDEHYDE.symbols, FORMALDEHYDE.coords, data["hessian"])
+
+    def excitation(coords_ang):
+        m = gto.M(atom=list(zip(FORMALDEHYDE.symbols, coords_ang)), basis="6-31g", unit="Angstrom", verbose=0)
+        mf = dft.RKS(m, xc="b3lyp")
+        mf.grids.atom_grid = (50, 194)
+        mf.conv_tol = 1e-11
+        mf.kernel()
+        td = mf.TDA() if method == "tda" else mf.TDDFT()
+        td.nstates, td.conv_tol = 3, 1e-9
+        td.kernel()
+        return td.e[0]
+
+    h = 0.5  # mass-weighted step (sqrt(me) Bohr); small next to the zero-point amplitude (~20)
+    k = int(np.nanargmax(res["S"]))  # the C=O stretch
+    step = (nm["modes"][:, k] / nm["sqrt_m"]).reshape(4, 3) * h * 0.529177210903  # Angstrom
+    fd = (excitation(FORMALDEHYDE.coords + step) - excitation(FORMALDEHYDE.coords - step)) / (2 * h)
+    assert res["g_au"][k] == pytest.approx(fd, rel=2e-3)
+    assert res["S"][k] > 0.5  # n -> pi*: the C=O stretch is strongly displaced
+    out_of_plane = [i for i in range(6) if np.allclose(nm["modes"][:, i].reshape(4, 3)[:, 1:], 0, atol=1e-6)]
+    assert out_of_plane and all(res["S"][i] < 1e-8 for i in out_of_plane)  # symmetry: not displaced
+
+
+def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
+    """vibronic stage per fragment, its parameters in diabatic.json, and cheap reruns of the summary."""
+    from eecc.qm import vibronic
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(4.0), str(geo))
+    cfg = _small_config(tmp_path, geo, td={"nstates": 3}, couplings={"methods": ["tresp"]},
+                        system={"enabled": True, "nstates": 6, "include_ct": False}, vibronic={"enabled": True})
+    pipe = Pipeline(cfg, log=lambda *a: None)
+    pipe.run()
+    for name in ("frag1", "frag2"):
+        assert pipe.is_done("vibronic", name)
+        out = json.load(open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")))
+        assert len(out["modes"]["freq_cm"]) == 12 and out["summary"]["n_modes"] == 12
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert [set(f["vibronic"]) >= {"S_eff", "omega_eff_cm", "sigma_low_cm"} for f in res["fragments"]] == [True] * 2
+    s1, s2 = (f["vibronic"] for f in res["fragments"])
+    assert s1["S_eff"] == pytest.approx(s2["S_eff"], rel=1e-4)  # identical monomers
+    assert "08_vibronic" in pipe.stage_dir("vibronic")  # existing work dirs keep their numbers
+
+    # a new cutoff reruns the summary (and the diabatization), not the quantum chemistry
+    monkeypatch.setattr(vibronic, "_compute", lambda *a, **k: pytest.fail("recomputed the Hessian"))
+    pipe.cfg.vibronic.cutoff = 100.0
+    assert not pipe.is_done("vibronic", "frag1") and not pipe.is_done("diabatize")
+    pipe.run()
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert res["fragments"][0]["vibronic"]["cutoff_cm"] == 100.0
+    assert pipe.is_done("diabatize") and pipe.restamp()[-1] == "vibronic"
+
+
+def test_slurm_jobs_for_vibronic_stage(tmp_path, monkeypatch):
+    import subprocess
+    from eecc.qm import slurm
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo, system={"enabled": True}, vibronic={"enabled": True},
+                        slurm={"account": "p"})
+    scripts = slurm.submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
+    vib = next(p for p in scripts if p.endswith("vib.sh"))
+    text = open(vib).read()
+    assert "--array=1-2" in text and "--stage vibronic --fragment $SLURM_ARRAY_TASK_ID" in text
+    assert "#SBATCH -t 24:00:00" in text
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{100 + len(calls)}\n")
+    monkeypatch.setattr(slurm.subprocess, "run", fake_run)
+    jobs = dict(line.split() for line in slurm.submit(Pipeline(cfg), str(tmp_path / "c.yaml")))
+    dia = next(c for c in calls if c[-1].endswith("diabatize.sh"))
+    assert jobs["vib"] in dia[2] and jobs["prep"] in next(c for c in calls if c[-1].endswith("vib.sh"))[2]

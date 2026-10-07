@@ -5,6 +5,8 @@
 3. analysis: couplings, after all array tasks succeeded
 4. with system.enabled: system (whole-system TDDFT, one node) after prep, in
    parallel with the fragments, and diabatize after both
+5. with vibronic.enabled: vibronic (Hessian + excited-state gradient), one array
+   task per fragment after prep; diabatize waits for it
 
 Stages that are already complete are skipped, so resubmitting after a failure
 reruns only the missing jobs and array tasks.
@@ -102,6 +104,15 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         "analysis": _script(pipe, "analysis", s.time_analysis, [f"{run} --stage couplings"],
                             cpus=s.analysis_cpus, mem=s.analysis_mem),
     }
+    vib_todo = []
+    if pipe.cfg.vibronic.enabled:
+        vib_todo = list(range(1, n + 1))
+        if prep_done:
+            vib_todo = [k for k, nm in enumerate(pipe.fragment_names(), 1) if not pipe.is_done("vibronic", nm)]
+        if vib_todo:
+            scripts["vib"] = _script(pipe, "vib", s.time_vibronic,
+                                     [f"{run} --stage vibronic --fragment $SLURM_ARRAY_TASK_ID"],
+                                     cpus=s.cpus, mem=s.mem, array=_array_spec(vib_todo))
     if pipe.cfg.system.enabled:
         scripts["system"] = _script(pipe, "system", s.time_system, [f"{run} --stage system"],
                                     cpus=s.system_cpus, mem=s.system_mem, partition=s.system_partition)
@@ -132,10 +143,10 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip().split(";")[0]
 
     # job -> jobs it waits for (only those submitted now; finished stages need no wait)
-    waits = {"prep": [], "frag": ["prep"], "analysis": ["frag"], "system": ["prep"],
-             "diabatize": ["system", "frag", "analysis"]}
+    waits = {"prep": [], "frag": ["prep"], "vib": ["prep"], "analysis": ["frag"], "system": ["prep"],
+             "diabatize": ["system", "frag", "analysis", "vib"]}
     ids: dict = {}
-    for key in ("prep", "frag", "analysis", "system", "diabatize"):
+    for key in ("prep", "frag", "vib", "analysis", "system", "diabatize"):
         if key in paths:
             # analysis also needs prep when the fragment jobs are skipped
             deps = [ids[w] for w in waits[key] if w in ids] or ([ids["prep"]] if "prep" in ids and key != "prep" else [])

@@ -125,6 +125,18 @@ class SystemConfig:
 
 
 @dataclass
+class VibronicConfig:
+    # Huang-Rhys factors and frequencies of each fragment's td.state (displaced harmonic oscillator,
+    # vertical gradient): ground-state Hessian + excitation-energy gradient, with the td method.
+    enabled: bool = False
+    cutoff: float = 800.0  # cm-1; modes above form the effective mode, modes below a Gaussian width
+    temperature: float = 298.15  # K, for the width from low-frequency modes
+    freq_scale: float = 1.0  # scales the reported frequencies (not S)
+    min_frequency: float = 50.0  # cm-1; lower (and imaginary) modes get no S
+    davidson_tol: float = 1e-6  # TDDFT convergence for the excited-state gradient
+
+
+@dataclass
 class ResourcesConfig:
     threads: int = 0  # 0: take OMP_NUM_THREADS / all available
     memory_mb: int = 16000
@@ -157,6 +169,7 @@ class SlurmConfig:
     time_system: str = "24:00:00"
     time_opt: str = "24:00:00"
     time_td: str = "12:00:00"  # one fragment TDDFT; ~65-atom chromophores need 5-7 h on 32 cores
+    time_vibronic: str = "24:00:00"  # one fragment Hessian + excited-state gradient (vibronic.enabled)
     time_analysis: str = "02:00:00"
     setup: List[str] = field(default_factory=list)  # shell lines run before eecc
 
@@ -174,6 +187,7 @@ class PipelineConfig:
     transition: TransitionConfig = field(default_factory=TransitionConfig)
     couplings: CouplingsConfig = field(default_factory=CouplingsConfig)
     system: SystemConfig = field(default_factory=SystemConfig)
+    vibronic: VibronicConfig = field(default_factory=VibronicConfig)
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
     # Directory of the config file; relative paths are resolved against it.
@@ -372,6 +386,10 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError("system.nstates must be >= 0")
     if cfg.couplings.tdc_boundary not in ("free", "periodic"):
         raise ValueError("couplings.tdc_boundary must be 'free' or 'periodic'")
+    v = cfg.vibronic
+    if v.cutoff <= 0 or v.freq_scale <= 0 or v.temperature < 0 or v.min_frequency < 0 or v.davidson_tol <= 0:
+        raise ValueError("vibronic: cutoff, freq_scale and davidson_tol must be positive; temperature and "
+                         "min_frequency must be >= 0")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
         raise ValueError("transition.cube spacing and margin must be positive")
 

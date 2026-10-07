@@ -23,6 +23,7 @@ SECTION_HELP: Dict[str, str] = {
     "transition.tresp": "TrESP charge fit",
     "couplings": "Coulomb couplings between every fragment pair",
     "system": "whole-system TDDFT and exciton Hamiltonian (Phase 2)",
+    "vibronic": "Huang-Rhys factors and frequencies of each fragment's td.state",
     "resources": "local run (and inside each Slurm job)",
     "slurm": "Slurm jobs (eecc run --slurm)",
 }
@@ -85,6 +86,13 @@ HELP: Dict[str, str] = {
     "system.nstates": "whole-system states; 0: four per fragment. LE + CT needs n² for n fragments",
     "system.include_ct": "add HOMO→LUMO charge-transfer states between every fragment pair",
     "system.memory_mb": "PySCF memory for the whole-system run (MB); null: resources.memory_mb",
+    "vibronic.enabled": "compute vibronic parameters (ground-state Hessian + excitation-energy gradient per "
+                        "fragment; about as long as the td stage or longer)",
+    "vibronic.cutoff": "cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width",
+    "vibronic.temperature": "K; temperature of the width from the low-frequency modes",
+    "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled",
+    "vibronic.min_frequency": "cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³)",
+    "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (tighter than td.davidson_tol)",
     "resources.threads": "threads; 0: OMP_NUM_THREADS or all cores",
     "resources.memory_mb": "PySCF memory (MB)",
     "resources.tmpdir": "PySCF scratch directory; null: default",
@@ -104,6 +112,7 @@ HELP: Dict[str, str] = {
     "slurm.time_system": "time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h)",
     "slurm.time_opt": "time limit of the optimization job",
     "slurm.time_td": "time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores)",
+    "slurm.time_vibronic": "time limit of one fragment vibronic job (Hessian + excited-state gradient)",
     "slurm.time_analysis": "time limit of the analysis and diabatize jobs",
     "slurm.setup": "shell lines run before eecc, e.g. [\"module load python\", \"source venv/bin/activate\"]",
 }

@@ -126,7 +126,7 @@ def _cmd_init(args):
 
     data = {"name": args.name or os.path.splitext(os.path.basename(args.geometry or out))[0],
             "geometry": rel(args.geometry) if args.geometry else "", "charge": args.charge,
-            "fragments": {}, "opt": {}, "td": {}, "system": {}, "slurm": {}}
+            "fragments": {}, "opt": {}, "td": {}, "system": {}, "vibronic": {}, "slurm": {}}
     notes = {}
     mode = args.fragments or ("files" if args.files else "ranges" if args.ranges else None)
     if mode is None:  # separate molecules -> auto; one covalent system -> the user gives ranges
@@ -152,6 +152,8 @@ def _cmd_init(args):
         data["opt"]["enabled"] = False
     if args.system:
         data["system"]["enabled"] = True
+    if args.vibronic:
+        data["vibronic"]["enabled"] = True
     if args.account:
         data["slurm"]["account"] = args.account
     else:
@@ -311,6 +313,8 @@ def main() -> None:
     p.add_argument("--no-opt", action="store_true", help="Skip the geometry optimization")
     p.add_argument("--system", action="store_true",
                    help="Also compute the whole system and its exciton Hamiltonian (one full node)")
+    p.add_argument("--vibronic", action="store_true",
+                   help="Also compute Huang-Rhys factors and frequencies of each fragment (Hessian, hours)")
     p.add_argument("--account", help="Slurm allocation")
     p.set_defaults(func=_cmd_init)
 
@@ -318,10 +322,11 @@ def main() -> None:
     p = sub.add_parser("run", help="Automated pipeline: geometry -> TD-DFT -> couplings (needs eecc[qm])")
     p.add_argument("config", help="Pipeline YAML config file")
     p.add_argument("--stage", default="all",
-                   choices=["all", "opt", "fragments", "td", "transition", "couplings", "system", "diabatize"],
+                   choices=["all", "opt", "fragments", "td", "transition", "couplings", "system", "diabatize",
+                            "vibronic"],
                    help="Run only this stage")
     p.add_argument("--fragment", type=int, default=None,
-                   help="1-based fragment index (td/transition stages only)")
+                   help="1-based fragment index (td/transition/vibronic stages only)")
     p.add_argument("--force", action="store_true", help="Rerun stages even if up to date")
     p.add_argument("--slurm", action="store_true", help="Submit the pipeline as Slurm jobs")
     p.add_argument("--dry-run", action="store_true", help="Write Slurm scripts without submitting")
