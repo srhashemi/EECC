@@ -92,6 +92,49 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
     return summary
 
 
+UNITS = {"H_eV": "eV", "adiabatic_eV": "eV", "transition_dipoles_au": "e*bohr (atomic units)",
+         "oscillator_strengths": "dimensionless", "completeness": "dimensionless (0 to 1)",
+         "fragments[].center_ang": "Angstrom", "fragments[].principal_axes": "unit vectors",
+         "fragments[].moments_amu_ang2": "amu*Angstrom^2",
+         "pairs[].J_total_cm-1, pairs[].<method>_cm-1": "cm^-1"}
+CONVENTIONS = {
+    "frame": "Cartesian frame of system.xyz (the whole-system geometry)",
+    "signs": "the phase of every LE state follows its fragment's transition density and that of every CT state "
+             "the fragment HOMO and LUMO, so the signs of couplings and dipoles are arbitrary per state but "
+             "consistent with each other",
+    "ct_states": "CT(a->b): one electron from the HOMO of fragment a to the LUMO of fragment b",
+    "principal_axes": "rows, ordered by increasing moment of inertia (moments_amu_ang2; fragment atoms without "
+                      "caps, atomic masses); for a planar molecule the last axis is the plane normal; each axis "
+                      "has its largest component positive (the first one on a tie); axes with equal moments "
+                      "(a symmetric top) are any orthonormal pair in their plane",
+}
+
+
+def fragment_geometry(structure, n_own: int) -> Dict[str, Any]:
+    """Centre of mass (Angstrom) and principal axes of a fragment's own atoms (caps excluded)."""
+    from pyscf.data import elements
+
+    xyz = np.asarray(structure.coords[:n_own], float)
+    m = np.array([elements.MASSES[elements.charge(s)] for s in structure.symbols[:n_own]])
+    com = m @ xyz / m.sum()
+    r = xyz - com
+    inertia = np.eye(3) * np.sum(m * np.sum(r ** 2, axis=1)) - (r.T * m) @ r
+    moments, axes = np.linalg.eigh(inertia)
+    axes = axes.T
+    for a in axes:  # largest component positive; a tolerance so that roundoff cannot pick the other of two equal ones
+        a *= np.sign(a[np.flatnonzero(np.abs(a) >= np.abs(a).max() - 1e-6)[0]])
+    return {"center_ang": com.tolist(), "principal_axes": axes.tolist(), "moments_amu_ang2": moments.tolist()}
+
+
+def state_types(names, labels) -> list:
+    """Type and fragment(s) of each diabatic state in *labels* (LE(name) or CT(donor->acceptor))."""
+    states = [{"label": f"LE({n})", "type": "LE", "fragment": n} for n in names]
+    states += [{"label": f"CT({a}->{b})", "type": "CT", "donor": a, "acceptor": b}
+               for a in names for b in names if a != b]
+    by_label = {s["label"]: s for s in states}
+    return [by_label[l] for l in labels]
+
+
 def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     """Diabatize the system states onto the fragments of *pipe*; writes diabatic.json/.txt."""
     from eecc.qm.diabatize import (diabatic_dipoles, diabatic_oscillator_strengths, diabatize_from_pipeline,
@@ -137,10 +180,21 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     mu = diabatic_dipoles(res, data["tdm_au"])
     osc = diabatic_oscillator_strengths(res, mu)
 
+    fragments = []
+    with open(os.path.join(pipe.stage_dir("fragments"), "fragments.json")) as f:
+        meta = {fr["name"]: fr for fr in json.load(f)["fragments"]}
+    for name in names:
+        n_own = len(meta[name]["parent_atoms_1based"])
+        fragments.append({"name": name, "natoms_own": n_own,
+                          **fragment_geometry(pipe.load_fragment_structure(name), n_own)})
+
+    from eecc.qm.pipeline import DIABATIZE_FORMAT
     os.makedirs(workdir, exist_ok=True)
-    result = {"labels": res.labels, "H_eV": res.H_eV.tolist(), "completeness": res.completeness.tolist(),
+    result = {"format_version": int(DIABATIZE_FORMAT), "units": UNITS, "conventions": CONVENTIONS,
+              "labels": res.labels, "states": state_types(names, res.labels),
+              "H_eV": res.H_eV.tolist(), "completeness": res.completeness.tolist(),
               "transition_dipoles_au": mu.tolist(), "oscillator_strengths": osc.tolist(),
-              "adiabatic_eV": data["energies_eV"].tolist(), "pairs": pairs}
+              "fragments": fragments, "adiabatic_eV": data["energies_eV"].tolist(), "pairs": pairs}
     with open(os.path.join(workdir, "diabatic.json"), "w") as f:
         json.dump(result, f, indent=2)
 

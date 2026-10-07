@@ -26,8 +26,9 @@ DEPENDS = {
     "fragments": ("opt",), "td": ("fragments",), "transition": ("td",), "couplings": ("transition",),
     "system": ("opt",), "diabatize": ("system", "td"),
 }
-# Output format of the diabatize stage; raising it reruns older results (2: diabatic transition dipoles).
-DIABATIZE_FORMAT = "2"
+# Output format of the diabatize stage; raising it reruns older results (2: diabatic transition dipoles;
+# 3: format_version, units, conventions, state types, fragment centres and axes).
+DIABATIZE_FORMAT = "3"
 PER_FRAGMENT = ("td", "transition")
 
 
@@ -321,10 +322,10 @@ class Pipeline:
             "diabatize": ["diabatic.json", "diabatic.txt"],
         }[stage]
         ok = os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
-        if ok and stage == "diabatize":  # a result from before the diabatic transition dipoles is not current
+        if ok and stage == "diabatize":  # a result in an older output format is not current
             try:
                 with open(os.path.join(d, "diabatic.json")) as f:
-                    ok = "transition_dipoles_au" in json.load(f)
+                    ok = json.load(f).get("format_version") == int(DIABATIZE_FORMAT)
             except (OSError, ValueError):
                 ok = False
         return ok
