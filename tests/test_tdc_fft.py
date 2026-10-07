@@ -122,3 +122,30 @@ def test_monomer_separation_falls_back_to_density_centroids():
     assert abs(monomer_separation(A, B)[0] - 8.0) < 0.05
     A["atoms"], B["atoms"] = [], []
     assert abs(monomer_separation(A, B)[0] - 8.0) < 0.05
+
+
+def test_tdc_fft_shared_grid_free_matches_direct_sum():
+    """One dimer cube split into fragments (shared grid): the free boundary gives the exact discrete sum."""
+    from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce
+    from eecc.coupling.tdc_fft import tdc_coupling_fft_simple
+
+    A = _px_cube([0.0, 0.0, 0.0], 0.4, 41, grid_shift=4.0)  # both boxes span x = -4 ... 12 Å
+    B = _px_cube([8.0, 0.0, 0.0], 0.4, 41, grid_shift=-4.0)
+    assert np.allclose(A["origin"], B["origin"])
+    direct = tdc_coupling_bruteforce(A, B, threshold=1e-6)["J_cm1"]
+    free = tdc_coupling_fft_simple(A, B)["J_cm1"]  # free is the default
+    periodic = tdc_coupling_fft_simple(A, B, pad_factor=3, boundary="periodic")["J_cm1"]
+    assert abs(free - direct) / abs(direct) < 1e-3
+    assert abs(periodic - direct) > abs(free - direct)
+
+
+def test_cube_file_routes_default_to_free_boundary():
+    """Every cube-file entry point uses the free (isolated) boundary unless told otherwise."""
+    import inspect
+
+    from eecc.coupling.tdc_fft import tdc_coupling_fft, tdc_coupling_fft_simple
+    from eecc.workflows.tdc_one_dimer import run_one_dimer_tdc
+    from eecc.workflows.tdc_two_monomers import run_tdc
+
+    for f in (tdc_coupling_fft, tdc_coupling_fft_simple, run_tdc, run_one_dimer_tdc):
+        assert inspect.signature(f).parameters["boundary"].default == "free", f.__name__

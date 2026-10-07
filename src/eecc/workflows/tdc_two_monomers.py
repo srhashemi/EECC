@@ -25,6 +25,7 @@ def run_tdc(
     dielectric: float = 1.0,
     pad_factor: int = 3,
     threshold: float = 0.0005,
+    boundary: str = "free",
 ) -> None:
     """Run all TDC coupling methods between two monomer cubes."""
     inputs_dir = "inputs"
@@ -57,7 +58,7 @@ def run_tdc(
 
     # --- FFT TDC ---
     t0 = time.time()
-    fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor)
+    fft = tdc_coupling_fft(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
     t_fft = time.time() - t0
 
     # --- Direct TDC ---
@@ -77,7 +78,7 @@ def run_tdc(
     print("=" * w)
 
     print(f"\n  R_AB = {fft['R_AB_Ang']:.4f} Ang")
-    print(f"  FFT pad factor = {pad_factor}")
+    print(f"  FFT boundary = {boundary}" + (f", pad factor = {pad_factor}" if boundary == "periodic" else ""))
     print(f"  Direct threshold = {threshold}  "
           f"(voxels: A={direct['nA']:,}, B={direct['nB']:,},  "
           f"capture: A={direct['capture_A']:.1%}, B={direct['capture_B']:.1%})")
@@ -101,7 +102,7 @@ def run_tdc(
 
         f.write(f"# Grid A: {cubeA['nv']},  spacing ({dxA:.6f}, {dyA:.6f}, {dzA:.6f}) Ang\n")
         f.write(f"# Grid B: {cubeB['nv']},  spacing ({dxB:.6f}, {dyB:.6f}, {dzB:.6f}) Ang\n")
-        f.write(f"# FFT pad factor = {pad_factor}\n")
+        f.write(f"# FFT boundary = {boundary}" + (f", pad factor = {pad_factor}" if boundary == "periodic" else "") + "\n")
         f.write(f"# Direct threshold = {threshold}  "
                 f"(voxels: A={direct['nA']:,}, B={direct['nB']:,},  "
                 f"capture: A={direct['capture_A']:.1%}, B={direct['capture_B']:.1%})\n")

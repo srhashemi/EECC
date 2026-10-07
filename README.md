@@ -317,7 +317,7 @@ are described under [Example data](#example-data).
 ### TDC coupling from two monomer cube files
 
 ```bash
-eecc tdc-two-monomers monomerA.cub monomerB.cub [--pad 3] [--threshold 0.0005] [--dielectric 1.0]
+eecc tdc-two-monomers monomerA.cub monomerB.cub [--boundary free] [--threshold 0.0005] [--dielectric 1.0]
 ```
 
 Runs four coupling methods and prints a comparison table:
@@ -325,25 +325,44 @@ Runs four coupling methods and prints a comparison table:
 - **TDC (FFT)** — Coulomb coupling via FFT Poisson solver
 - **TDC (direct)** — brute-force double summation (cross-check)
 
+The FFT solves the isolated problem (`--boundary free`, the default): the exact sum
+over all voxels, at any separation, in seconds. `--boundary periodic [--pad 3]`
+reproduces the published workflow, whose periodic images distort the coupling,
+mildly for neighbours and strongly for distant pairs (BODIPY oligomer cubes):
+
+| Pair | R (Å) | FFT, periodic | FFT, free | Direct sum (threshold 0.0005) |
+|---|---|---|---|---|
+| Dimer 1–2 | 8.6 | 990.1 | 978.8 | 967.2 |
+| Tetramer 1–2 | 9.7 | −948.3 | −934.8 | −924.2 |
+| Tetramer 1–3 | 16.8 | −126.6 | −103.2 | −101.7 |
+| Tetramer 1–4 | 24.7 | −14.1 | −29.4 | −29.1 |
+
+The free FFT took 2–7 s per pair, the direct sum about 5 min. The direct sum
+drops voxels below the threshold and so comes out slightly low: on the dimer,
+thresholds of 0.0005, 0.0002, 0.0001 and 0.00005 give 967.2, 974.9, 977.4 and
+978.5 cm⁻¹, approaching the free FFT value.
+
 Results with timing are printed and saved to `outputs/TDC_two_monomer_results.txt`.
 
 Example with the bundled BODIPY dimer fragment cubes (see [Example data](#example-data)):
 
 ```bash
-eecc tdc-two-monomers BOPIDY_DIM-s-TD-WB97XD-631Gd-f1.cub BOPIDY_DIM-s-TD-WB97XD-631Gd-f2.cub --pad 3 --threshold 0.0005
+eecc tdc-two-monomers BOPIDY_DIM-s-TD-WB97XD-631Gd-f1.cub BOPIDY_DIM-s-TD-WB97XD-631Gd-f2.cub --threshold 0.0005
 ```
 
-This gives |J| ≈ 990 cm⁻¹ (TDC, FFT). The sign is arbitrary because the phase
-of each fragment's transition density is arbitrary.
+This gives |J| ≈ 979 cm⁻¹ (TDC, FFT; 990 cm⁻¹ with `--boundary periodic`, the
+published value). The sign is arbitrary because the phase of each fragment's
+transition density is arbitrary.
 
 ### TDC coupling from a single dimer cube
 
 ```bash
-eecc tdc-one-dimer dimer.cub --fragA "1-24" --fragB "25-48"
+eecc tdc-one-dimer dimer.cub --fragA "1-24" --fragB "25-48" [--boundary free]
 ```
 
 Splits a dimer transition-density cube into two fragment cubes by assigning
-each grid point to the nearest atom in each fragment, then computes TDC coupling.
+each grid point to the nearest atom in each fragment, then computes TDC coupling
+(FFT on the shared grid; free boundary by default, `--boundary periodic` as published).
 
 ### Intramolecular coupling from a charge file
 

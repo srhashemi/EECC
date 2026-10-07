@@ -183,18 +183,18 @@ def tdc_coupling_fft(
     cubeB: Dict[str, Any],
     dielectric: float = 1.0,
     pad_factor: int = 3,
-    boundary: str = "periodic",
+    boundary: str = "free",
 ) -> Dict[str, Any]:
     """Compute TDC Coulomb coupling between two monomer cubes via FFT.
 
-    Computes V_B on a padded grid, then interpolates V_B at cubeA's grid points.
+    Computes V_B on a grid, then interpolates V_B at cubeA's grid points.
 
-    boundary='periodic' (default, as in the published workflow) uses cubeB's own
-    grid padded by *pad_factor* with a periodic Coulomb kernel. Periodic images of
-    B then add to the potential, and parts of cubeA outside the padded grid see
-    zero potential, so distant pairs are inaccurate.
-    boundary='free' solves the isolated problem on a grid covering both cubes and
-    agrees with the direct sum at any separation (*pad_factor* is not used).
+    boundary='free' (default) solves the isolated problem on a grid covering both
+    cubes and agrees with the direct sum at any separation (*pad_factor* is not used).
+    boundary='periodic' reproduces the published workflow: cubeB's own grid padded
+    by *pad_factor* with a periodic Coulomb kernel. Periodic images of B then add to
+    the potential, and parts of cubeA outside the padded grid see zero potential, so
+    the coupling is off by about 10-30 % for neighbours and more for distant pairs.
 
     Returns a dict with J_eV, J_cm1, transition dipoles, and point-dipole
     and extended-dipole comparison values.
@@ -271,14 +271,26 @@ def tdc_coupling_fft_simple(
     cubeB: Dict[str, Any],
     dielectric: float = 1.0,
     pad_factor: int = 3,
+    boundary: str = "free",
 ) -> Dict[str, float]:
     """Simplified TDC coupling for fragments sharing the same grid.
 
     Use this when cubeA and cubeB already share the same origin and
     voxel vectors (e.g. fragments split from a single dimer cube).
+    boundary='free' (default) is the isolated problem (exact discrete sum);
+    'periodic' pads the shared grid by *pad_factor* with a periodic kernel, as in
+    the published workflow.
     """
     rhoA, rhoB = cubeA['rho'], cubeB['rho']
     dxA, dyA, dzA = grid_spacing(cubeA)
+
+    if boundary == "free":
+        V, V_origin = _free_space_potential(rhoB, (dxA, dyA, dzA), cubeA['origin'], cubeA)
+        phi = _interpolate_potential(V, V_origin, dxA, dyA, dzA, cubeA)
+        J_eV = (KE_EV_ANG / dielectric) * float(np.sum(rhoA * phi)) * voxel_volume(cubeA)
+        return {'J_eV': J_eV, 'J_cm1': J_eV * EV_TO_CM}
+    if boundary != "periodic":
+        raise ValueError("boundary must be 'periodic' or 'free'")
 
     V_padded, _ = _fft_coulomb_potential(
         rhoB, dxA, dyA, dzA, cubeA['origin'], pad_factor=pad_factor,

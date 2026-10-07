@@ -23,7 +23,7 @@ from eecc.geometry.fragments import (
 
 def run_one_dimer_tdc(
     dimer_name: str, fragA: list, fragB: list,
-    dielectric: float = 1.0, pad_factor: int = 3,
+    dielectric: float = 1.0, pad_factor: int = 3, boundary: str = "free",
 ) -> None:
     """Run TDC coupling from a single dimer cube file."""
     inputs_dir = "inputs"
@@ -77,15 +77,15 @@ def run_one_dimer_tdc(
     Jpd_eV, Jpd_cm1 = point_dipole_coupling(muA['mu'], muB['mu'], Rvec, dielectric=dielectric)
 
     print(f"  dielectric = {dielectric}")
-    print(f"  pad factor = {pad_factor}")
+    print(f"  FFT boundary = {boundary}" + (f", pad factor = {pad_factor}" if boundary == "periodic" else ""))
     print(f"Point-dipole J ~ {Jpd_cm1:.2f} cm^-1 ({Jpd_eV:.6f} eV)")
 
-    tdc = tdc_coupling_fft_simple(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor)
+    tdc = tdc_coupling_fft_simple(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
 
     out_path = os.path.join(outputs_dir, "TDC_from_one_dimer.txt")
     with open(out_path, "w") as f:
         f.write(f"# dielectric = {dielectric}\n")
-        f.write(f"# pad_factor = {pad_factor}\n")
+        f.write(f"# FFT boundary = {boundary}" + (f", pad_factor = {pad_factor}" if boundary == "periodic" else "") + "\n")
         f.write("J_eV  J_cm^-1\n")
         f.write(f"{tdc['J_eV']:.8f}  {tdc['J_cm1']:.4f}\n\n")
 
