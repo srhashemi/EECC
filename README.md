@@ -243,6 +243,11 @@ the vibronic input of Frenkel–Holstein spectrum models. It uses the displaced
 harmonic oscillator model with the vertical-gradient method: at the fragment
 geometry it computes the ground-state Hessian (normal modes, frequencies ω_k) and
 the gradient of the excitation energy, with the `td` functional, basis and method.
+The functional and basis set are your choice (`td.xc`, `td.basis`, or `eecc init
+--functional ... --basis ...`). The Huang–Rhys factors depend strongly on the
+functional and no single one fits every dye (see
+[Validation](#vibronic-parameters-against-experiment)), so check it against one
+measured spectrum of the dye or a close relative.
 Projected onto mass-weighted mode k (component g_k), the gradient gives the
 dimensionless displacement and Huang–Rhys factor (atomic units)
 
@@ -389,6 +394,33 @@ Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
 `vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
 the summary values within 0.4 % and single weakly displaced modes (S > 0.01) within
 11 % (measured at Davidson 1e-5).
+
+Quaterrylene (parent C40H20, 60 atoms, geometry optimized with ωB97X-D/6-31G(d))
+against the absorption of 1,1'-dihexylquaterrylene in toluene (Cravcenco et al.,
+J. Am. Chem. Soc. 143 (2021) 19232; measured S ≈ 0.5 at about 1400 cm⁻¹).
+ωB97X-D gives the right progression shape and spacing (ω_eff 1455 cm⁻¹) but twice
+the vibronic strength (S_eff 1.00); the best scale is 0.52 whichever modes are
+taken. Cost on a full node: 10.5 h (Hessian 6.9 h with the integrals recomputed),
+peak 189 GB from the TDDFT with the integrals in memory, on a 256 GB node.
+
+**Choice of functional.** The same two runs with B3LYP (same geometries, basis,
+state and the faster settings, Davidson 1e-4 and `response_grid: [75, 302]`; about
+7.5 h each) show that the better functional depends on the dye. Best scale on all S
+(1 = computed S fit as they are) and rms of the unscaled fit:
+
+| Dye, spectrum, modes | ωB97X-D: S_eff, scale, rms | B3LYP: S_eff, scale, rms |
+|---|---|---|
+| BODIPY absorption, ≥ 150 cm⁻¹ | 0.16, 0.76, 0.060 | 0.84, 0.34, 0.185 |
+| BODIPY absorption, ≥ 400 cm⁻¹ | 0.16, 0.99, 0.031 | 0.84, 0.35, 0.182 |
+| BODIPY emission, ≥ 400 cm⁻¹ | 0.16, 1.35, 0.035 | 0.84, 0.41, 0.141 |
+| quaterrylene absorption, ≥ 50 cm⁻¹ | 1.00, 0.52, 0.178 | 0.45, 1.15, 0.038 |
+| quaterrylene absorption, ≥ 400 cm⁻¹ | 1.00, 0.52, 0.190 | 0.45, 1.15, 0.041 |
+
+ωB97X-D fits BODIPY and B3LYP fits quaterrylene without scaling; the other
+functional overestimates the vibronic strength 2–3 times (for BODIPY a 0–1
+shoulder at 60 % of the 0–0 peak instead of 23 %). Choose the functional with a
+measured spectrum of the dye or a close relative; a best scale far from 1 shows a
+poor choice.
 
 ## Working from cube or charge files
 
