@@ -319,7 +319,10 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
             raise RuntimeError(f"{name}: TDDFT state {td_cfg.state} did not converge")
         e_exc = float(td.e[k]) * HARTREE_TO_EV
         log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV; excited-state gradient")
-        g1 = td.nuc_grad_method().kernel(state=td_cfg.state)
+        tdg = td.nuc_grad_method()
+        # PySCF stops the Z-vector solve after 20 iterations; B3LYP (smaller gaps than wB97X-D) needs more.
+        tdg.cphf_max_cycle = max(tdg.cphf_max_cycle, 100)
+        g1 = tdg.kernel(state=td_cfg.state)
         if rg:  # the Hessian on the SCF grid
             set_grid(mf, td_cfg.grid)
         if key:
