@@ -373,19 +373,22 @@ they are:
 | ≥ 400 cm⁻¹ | 0.99 | 1.35 |
 
 The high-frequency factors reproduce the measured vibronic structure without
-scaling (S_eff 0.16 at ω_eff 1321 cm⁻¹; the absorption shoulder at 2.6 eV). Two
-low-frequency torsions of the meso aryl group (62 and 129 cm⁻¹, S 1.1 and 1.7,
-flagged in `vibronic.txt`) are overestimated by the harmonic vertical-gradient
-model: they give a width of 610 cm⁻¹ where the spectra need about 230–290 cm⁻¹. When
-`vibronic.txt` warns about strong low-frequency modes, use S_eff and ω_eff with a
-width from experiment, or take `sigma_low` as an upper bound.
+scaling (S_eff 0.16 at ω_eff 1321 cm⁻¹; the absorption shoulder at 2.6 eV). The
+low-frequency modes are overestimated by the harmonic vertical-gradient model: those
+below 400 cm⁻¹ give a Gaussian width of 487 cm⁻¹ at 295 K, while the fitted width,
+which also holds the solvent broadening, is 230–290 cm⁻¹. The largest part comes from
+two torsions of the meso aryl group (62 and 129 cm⁻¹, S 1.1 and 1.7, flagged in
+`vibronic.txt`; 348 cm⁻¹ on their own). When `vibronic.txt` warns about strong
+low-frequency modes, use S_eff and ω_eff with a width from experiment, or take
+`sigma_low` as an upper bound.
 
 Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6, Hessian
 7.5 h). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
 on 256 GB nodes `vibronic.eri: auto` recomputes them for the Hessian. The default
 Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
 `vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
-the summary values within 0.4 % and single weakly displaced modes within about 10 %.
+the summary values within 0.4 % and single weakly displaced modes (S > 0.01) within
+11 % (measured at Davidson 1e-5).
 
 ## Working from cube or charge files
 
@@ -660,7 +663,7 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled |
 | `vibronic.min_frequency` | `50.0` | cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³) |
 | `vibronic.davidson_tol` | `0.0001` | TDDFT convergence for the excited-state gradient (1e-4 gives the S of 1e-6) |
-| `vibronic.response_grid` | `null` | grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly displaced modes up to ~10 %; null: td.grid |
+| `vibronic.response_grid` | `null` | grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly displaced modes up to ~11 %; null: td.grid |
 | `vibronic.eri` | `auto` | two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take at most half of resources.memory_mb; not used with td.density_fit |
 | `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
 | `resources.memory_mb` | `16000` | PySCF memory (MB) |

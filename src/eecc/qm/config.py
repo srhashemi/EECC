@@ -316,6 +316,23 @@ def _build(cls, data: Optional[Dict[str, Any]], where: str):
     return cls(**kwargs)
 
 
+# Lebedev angular grid sizes PySCF accepts (pyscf.dft.gen_grid.LEBEDEV_NGRID)
+LEBEDEV_SIZES = (6, 14, 26, 38, 50, 74, 86, 110, 146, 170, 194, 230, 266, 302, 350, 434, 590, 770, 974, 1202,
+                 1454, 1730, 2030, 2354, 2702, 3074, 3470, 3890, 4334, 4802, 5294, 5810)
+
+
+def _check_grid(key: str, grid, optional: bool) -> None:
+    """[radial, angular] DFT grid: positive integers, angular a Lebedev size."""
+    if grid is None and optional:
+        return
+    ok = (isinstance(grid, (list, tuple)) and len(grid) == 2
+          and all(isinstance(g, int) and not isinstance(g, bool) and g > 0 for g in grid))
+    if not ok:
+        raise ValueError(f"{key} must be [radial, angular] (positive integers){' or null' if optional else ''}")
+    if grid[1] not in LEBEDEV_SIZES:
+        raise ValueError(f"{key}: angular size {grid[1]} is not a Lebedev grid; e.g. 194, 302, 590")
+
+
 def _check_type(key: str, value: Any, default: Any, optional: bool) -> Any:
     """Check *value* against the type of its default; returns it (numeric strings -> float)."""
     if value is None:
@@ -370,9 +387,9 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError("opt.thresholds must be positive")
     if cfg.td.method not in VALID_TD_METHODS:
         raise ValueError(f"td.method must be one of {VALID_TD_METHODS}")
-    rg = cfg.td.response_grid
-    if rg is not None and (len(rg) != 2 or min(rg) <= 0):
-        raise ValueError("td.response_grid must be [radial, angular] or null")
+    _check_grid("opt.grid", cfg.opt.grid, optional=False)
+    _check_grid("td.grid", cfg.td.grid, optional=False)
+    _check_grid("td.response_grid", cfg.td.response_grid, optional=True)
     if cfg.td.davidson_tol <= 0:
         raise ValueError("td.davidson_tol must be positive")
     if not 1 <= cfg.td.state <= cfg.td.nstates:
@@ -392,9 +409,7 @@ def validate(cfg: PipelineConfig) -> None:
     if min(v.cutoff, v.freq_scale, v.min_frequency, v.davidson_tol) <= 0 or v.temperature < 0:
         raise ValueError("vibronic: cutoff, freq_scale, min_frequency and davidson_tol must be positive; "
                          "temperature must be >= 0")
-    vrg = v.response_grid
-    if vrg is not None and (len(vrg) != 2 or min(vrg) <= 0):
-        raise ValueError("vibronic.response_grid must be [radial, angular] or null")
+    _check_grid("vibronic.response_grid", v.response_grid, optional=True)
     if v.eri not in ("auto", "incore", "direct"):
         raise ValueError("vibronic.eri must be 'auto', 'incore' or 'direct'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:

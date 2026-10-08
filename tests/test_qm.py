@@ -911,6 +911,42 @@ def test_vibronic_gradient_matches_finite_differences(tmp_path, method):
     assert out_of_plane and all(res["S"][i] < 1e-8 for i in out_of_plane)  # symmetry: not displaced
 
 
+def test_grids_are_checked_when_the_config_is_read():
+    base = {"geometry": "x.xyz", "fragments": {"mode": "auto"}}
+    for bad, match in ((75, "radial, angular"), ([75, "302"], "radial, angular"), ([75.5, 302], "radial, angular"),
+                       ([75, 300], "Lebedev")):
+        with pytest.raises(ValueError, match=match):
+            config_from_dict(dict(base, vibronic={"response_grid": bad}))
+    with pytest.raises(ValueError, match="Lebedev"):
+        config_from_dict(dict(base, td={"response_grid": [75, 300]}))
+    with pytest.raises(ValueError, match="td.grid"):
+        config_from_dict(dict(base, td={"grid": [99]}))
+    assert config_from_dict(dict(base, vibronic={"response_grid": [75, 302]})).vibronic.response_grid == [75, 302]
+
+
+def test_vibronic_key_and_outputs_record_the_gradient_settings(tmp_path):
+    """No response grid: the key has no grid entry (older results stay valid); vibronic.json says what was used."""
+    import hashlib
+
+    from eecc.qm import vibronic
+
+    geo = tmp_path / "x.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    cfg = _small_config(tmp_path, geo)
+    td = cfg.td
+    old = [cfg.section_hash("td", ignore=vibronic.TD_UNUSED), vibronic.resolve_xc(td.xc),
+           vibronic.use_cartesian(td.basis, td.cart), cfg.vibronic.davidson_tol, 0, list(FORMALDEHYDE.symbols),
+           np.round(np.asarray(FORMALDEHYDE.coords, float), 8).tolist()]
+    assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) == hashlib.sha256(json.dumps(old).encode()).hexdigest()[:16]
+    raw = {"hessian": np.eye(12).reshape(4, 3, 4, 3).transpose(0, 2, 1, 3) * 0.5, "grad_ground": np.zeros((4, 3)),
+           "grad_excited": np.full((4, 3), 1e-3), "excitation_eV": np.array(4.0)}
+    os.makedirs(tmp_path / "v")
+    vibronic._save_npz(str(tmp_path / "v" / "vibronic.npz"), dict(raw, calc_key=np.array(
+        vibronic.calc_key(cfg, FORMALDEHYDE, 0))))
+    out = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "v"), "h2co")  # summary only: no QM
+    assert out["davidson_tol"] == 1e-4 and out["gradient_grid"] == list(cfg.td.grid)
+
+
 def test_vibronic_eri_choice():
     from eecc.qm.vibronic import eri_incore
 

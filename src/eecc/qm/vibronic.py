@@ -184,6 +184,8 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
         "name": name, "state": td_cfg.state, "method": td_cfg.method, "xc": resolve_xc(td_cfg.xc),
         "basis": td_cfg.basis, "cartesian": use_cartesian(td_cfg.basis, td_cfg.cart),
         "excitation_energy_eV": float(data["excitation_eV"]),
+        # the gradients (TDDFT, S0 and S1) used these; grad_ground in vibronic.npz is on gradient_grid
+        "davidson_tol": vc.davidson_tol, "gradient_grid": list(vc.response_grid or td_cfg.grid),
         "min_frequency_cm": vc.min_frequency, "freq_scale": vc.freq_scale, "summary": summary,
         "modes": {"freq_cm": res["freq_cm"].tolist(),
                   "S": [None if not v else float(s) for s, v in zip(res["S"], res["valid"])],
@@ -196,7 +198,7 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
     return out
 
 
-# td settings that the vibronic calculation does not use (it runs its own response on the SCF grid)
+# td settings that the vibronic calculation does not use (its response runs on td.grid or vibronic.response_grid)
 TD_UNUSED = ("response_grid", "davidson_tol")
 
 # gradients and excitation energy, saved before the Hessian so a killed job does not repeat them
@@ -259,8 +261,10 @@ def calc_key(cfg, structure: Structure, charge: int) -> str:
 
     td = cfg.td
     payload = [cfg.section_hash("td", ignore=TD_UNUSED), resolve_xc(td.xc), use_cartesian(td.basis, td.cart),
-               cfg.vibronic.davidson_tol, cfg.vibronic.response_grid, charge, list(structure.symbols),
+               cfg.vibronic.davidson_tol, charge, list(structure.symbols),
                np.round(np.asarray(structure.coords, float), 8).tolist()]
+    if cfg.vibronic.response_grid:  # only when set, so that keys without it stay as they were
+        payload.append(["response_grid", list(cfg.vibronic.response_grid)])
     return hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:16]
 
 
