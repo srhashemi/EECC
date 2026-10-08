@@ -9,7 +9,7 @@ from typing import Any, Dict
 import numpy as np
 
 from eecc.constants import AU_TO_DEBYE, HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, use_cartesian
+from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, set_grid, use_cartesian
 from eecc.qm.structure import Structure
 
 
@@ -54,8 +54,7 @@ def run_excited_states(
         raise RuntimeError(f"{name}: SCF did not converge")
 
     if td_cfg.response_grid:
-        mf.grids.atom_grid = tuple(td_cfg.response_grid)  # XC kernel of the response only
-        mf.grids.build()
+        set_grid(mf, td_cfg.response_grid)  # XC kernel of the response only
     td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
     td.nstates = td_cfg.nstates
     td.conv_tol = td_cfg.davidson_tol

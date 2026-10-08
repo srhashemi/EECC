@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict
 import numpy as np
 
 from eecc.constants import AU_TO_DEBYE, EV_TO_CM, HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks
+from eecc.qm.pyscf_setup import build_mol, build_rks, set_grid
 from eecc.qm.structure import Structure, read_xyz, save_xyz
 
 
@@ -40,8 +40,7 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
     log(f"[system] {len(structure)} atoms, {mol.nao} basis functions: SCF {(time.time() - t0) / 60:.1f} min")
 
     if td_cfg.response_grid:
-        mf.grids.atom_grid = tuple(td_cfg.response_grid)
-        mf.grids.build()
+        set_grid(mf, td_cfg.response_grid)
     td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
     td.nstates = nstates
     td.conv_tol = td_cfg.davidson_tol

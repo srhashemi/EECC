@@ -106,3 +106,13 @@ def build_rks(
     if density_fit:
         mf = mf.density_fit()
     return mf
+
+
+def set_grid(mf, grid: Sequence[int]) -> None:
+    """Rebuild the DFT integration grid of a converged *mf* with another [radial, angular] size.
+
+    with_non0tab keeps PySCF's screening of negligible basis functions, as the SCF builds its grid;
+    a plain build() drops it and makes every later XC evaluation on the grid slower.
+    """
+    mf.grids.atom_grid = tuple(grid)
+    mf.grids.build(with_non0tab=True)

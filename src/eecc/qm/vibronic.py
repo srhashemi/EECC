@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from eecc.constants import HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, use_cartesian
+from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, set_grid, use_cartesian
 from eecc.qm.structure import Structure
 
 AMU_TO_ME = 1822.888486209  # atomic mass unit -> electron masses
@@ -304,8 +304,7 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
         # g(S1) - g(S0) is a difference of large numbers, and mixing grids leaves an error of a few percent.
         rg = cfg.vibronic.response_grid
         if rg:
-            mf.grids.atom_grid = tuple(rg)
-            mf.grids.build()
+            set_grid(mf, rg)
         g0 = mf.nuc_grad_method().kernel()
         td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
         td.nstates = td_cfg.nstates
@@ -318,8 +317,7 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
         log(f"[vibronic] {name}: S{td_cfg.state} = {e_exc:.4f} eV; excited-state gradient")
         g1 = td.nuc_grad_method().kernel(state=td_cfg.state)
         if rg:  # the Hessian on the SCF grid
-            mf.grids.atom_grid = tuple(td_cfg.grid)
-            mf.grids.build()
+            set_grid(mf, td_cfg.grid)
         if key:
             _save_npz(partial_path, {"calc_key": np.array(key), "grad_ground": np.asarray(g0),
                                      "grad_excited": np.asarray(g1), "excitation_eV": np.array(e_exc)})
