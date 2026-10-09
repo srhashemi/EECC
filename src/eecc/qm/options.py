@@ -23,6 +23,7 @@ SECTION_HELP: Dict[str, str] = {
     "transition.tresp": "TrESP charge fit",
     "couplings": "Coulomb couplings between every fragment pair",
     "system": "whole-system TDDFT and exciton Hamiltonian (Phase 2)",
+    "vibronic": "Huang-Rhys factors and frequencies of each fragment's td.state",
     "resources": "local run (and inside each Slurm job)",
     "slurm": "Slurm jobs (eecc run --slurm)",
 }
@@ -85,6 +86,21 @@ HELP: Dict[str, str] = {
     "system.nstates": "whole-system states; 0: four per fragment. LE + CT needs n² for n fragments",
     "system.include_ct": "add HOMO→LUMO charge-transfer states between every fragment pair",
     "system.memory_mb": "PySCF memory for the whole-system run (MB); null: resources.memory_mb",
+    "vibronic.enabled": "compute vibronic parameters (ground-state Hessian + excitation-energy gradient per "
+                        "fragment; about as long as the td stage or longer)",
+    "vibronic.cutoff": "cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width",
+    "vibronic.temperature": "K; temperature of the width from the low-frequency modes",
+    "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S and the reorganization energy are unscaled",
+    "vibronic.min_frequency": "cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³)",
+    "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (1e-4 gives the S of 1e-6)",
+    "vibronic.nstates": "TDDFT roots solved for the excited-state gradient (only td.state is used; the td and "
+                        "system stages keep their own); null: td.state + 2",
+    "vibronic.response_grid": "grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps "
+                              "td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly "
+                              "displaced modes up to ~11 %; null: td.grid",
+    "vibronic.eri": "two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) "
+                    "or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take "
+                    "at most half of resources.memory_mb; not used with td.density_fit",
     "resources.threads": "threads; 0: OMP_NUM_THREADS or all cores",
     "resources.memory_mb": "PySCF memory (MB)",
     "resources.tmpdir": "PySCF scratch directory; null: default",
@@ -101,9 +117,13 @@ HELP: Dict[str, str] = {
     "slurm.system_partition": "partition of the whole-system job (one full node; trimers and larger need more than 24 h); null: slurm.partition",
     "slurm.system_cpus": "CPUs of the whole-system job",
     "slurm.system_mem": "memory of the whole-system job (\"0\": whole node)",
+    "slurm.vibronic_partition": "partition of the fragment vibronic jobs; null: slurm.partition",
+    "slurm.vibronic_cpus": "CPUs of one fragment vibronic job (a 65-atom BODIPY takes about 11 h on 128 cores)",
+    "slurm.vibronic_mem": "memory of one fragment vibronic job (\"0\": whole node)",
     "slurm.time_system": "time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h)",
     "slurm.time_opt": "time limit of the optimization job",
     "slurm.time_td": "time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores)",
+    "slurm.time_vibronic": "time limit of one fragment vibronic job (Hessian + excited-state gradient)",
     "slurm.time_analysis": "time limit of the analysis and diabatize jobs",
     "slurm.setup": "shell lines run before eecc, e.g. [\"module load python\", \"source venv/bin/activate\"]",
 }

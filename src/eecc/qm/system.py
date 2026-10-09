@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict
 import numpy as np
 
 from eecc.constants import AU_TO_DEBYE, EV_TO_CM, HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks
+from eecc.qm.pyscf_setup import build_mol, build_rks, make_td, set_grid
 from eecc.qm.structure import Structure, read_xyz, save_xyz
 
 
@@ -40,11 +40,8 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
     log(f"[system] {len(structure)} atoms, {mol.nao} basis functions: SCF {(time.time() - t0) / 60:.1f} min")
 
     if td_cfg.response_grid:
-        mf.grids.atom_grid = tuple(td_cfg.response_grid)
-        mf.grids.build()
-    td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
-    td.nstates = nstates
-    td.conv_tol = td_cfg.davidson_tol
+        set_grid(mf, td_cfg.response_grid)
+    td = make_td(mf, td_cfg.method, nstates, td_cfg.davidson_tol)
 
     # log every response call: the TDDFT of a large system runs for many hours
     progress = {"calls": 0, "vectors": 0}
@@ -96,6 +93,7 @@ UNITS = {"H_eV": "eV", "adiabatic_eV": "eV", "transition_dipoles_au": "e*bohr (a
          "oscillator_strengths": "dimensionless", "completeness": "dimensionless (0 to 1)",
          "fragments[].center_ang": "Angstrom", "fragments[].principal_axes": "unit vectors",
          "fragments[].moments_amu_ang2": "amu*Angstrom^2",
+         "fragments[].vibronic": "S dimensionless; *_cm in cm^-1, *_eV in eV, temperature_K in K",
          "pairs[].J_total_cm-1, pairs[].<method>_cm-1": "cm^-1"}
 CONVENTIONS = {
     "frame": "Cartesian frame of system.xyz (the whole-system geometry)",
@@ -187,6 +185,9 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
         n_own = len(meta[name]["parent_atoms_1based"])
         fragments.append({"name": name, "natoms_own": n_own,
                           **fragment_geometry(pipe.load_fragment_structure(name), n_own)})
+        if cfg.vibronic.enabled and pipe.is_done("vibronic", name):  # one-mode Holstein parameters of its LE state
+            with open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")) as f:
+                fragments[-1]["vibronic"] = json.load(f)["summary"]
 
     from eecc.qm.pipeline import DIABATIZE_FORMAT
     os.makedirs(workdir, exist_ok=True)

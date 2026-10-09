@@ -213,6 +213,7 @@ meant to be read by other programs, for example for spectra:
 | `completeness` | how well the computed whole-system states reproduce each diabatic state (0–1) |
 | `fragments` | per fragment: `name`, `natoms_own`, `center_ang` (centre of mass, Å), `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal) and `moments_amu_ang2`, from the fragment's own atoms without caps; two equal moments (a symmetric top) leave the two axes free to rotate in their plane |
 | `adiabatic_eV`, `pairs` | whole-system excitation energies; per fragment pair, the total and the Coulomb couplings (cm⁻¹) |
+| `fragments[].vibronic` | with `vibronic.enabled`: the fragment's Holstein parameters (`S_eff`, `omega_eff_cm`, `sigma_low_cm`, reorganization energies; see [Vibronic parameters](#vibronic-parameters)) |
 
 All positions and vectors are in the frame of `system.xyz`. The phase of each
 diabatic state (LE or CT) is arbitrary, so signs of couplings and dipoles are
@@ -233,6 +234,76 @@ fragment is not exactly part of the whole system. To check a result you rely on,
 run again with about twice as many states in a separate `workdir` and compare
 the couplings in the two `diabatic.txt` files. If they agree, the first run had
 enough states.
+
+### Vibronic parameters
+
+With `vibronic.enabled: true` (or `eecc init --vibronic`) the optional **vibronic**
+stage gives each fragment the Huang–Rhys factors and frequencies of its `td.state`,
+the vibronic input of Frenkel–Holstein spectrum models. It uses the displaced
+harmonic oscillator model with the vertical-gradient method: at the fragment
+geometry it computes the ground-state Hessian (normal modes, frequencies ω_k) and
+the gradient of the excitation energy, with the `td` functional, basis and method.
+The functional and basis set are your choice (`td.xc`, `td.basis`, or `eecc init
+--functional ... --basis ...`). The Huang–Rhys factors depend strongly on the
+functional and no single one fits every dye (see
+[Validation](#vibronic-parameters-against-experiment)), so check it against one
+measured spectrum of the dye or a close relative.
+Projected onto mass-weighted mode k (component g_k), the gradient gives the
+dimensionless displacement and Huang–Rhys factor (atomic units)
+
+d_k = −g_k / ω_k^(3/2),  S_k = d_k² / 2,  reorganization energy λ = Σ S_k ω_k.
+
+The gradient of the excitation energy (excited minus ground state) is used rather
+than that of the excited state alone, so the fragment, cut from the optimized
+aggregate and not exactly at its own minimum, gets no spurious ground-state force,
+and the parameters belong to the geometry of the couplings. Modes below
+`vibronic.min_frequency` (and imaginary ones) get no S, as S_k grows as 1/ω³.
+
+A one-mode Holstein model needs one vibration, so the modes are also summarized:
+
+- modes at or above `vibronic.cutoff` (default 800 cm⁻¹; for π-conjugated dyes
+  mostly C=C/C–N ring stretches at 1200–1600 cm⁻¹, too closely spaced to resolve)
+  form one effective mode: S_eff = Σ S_k, ω_eff = Σ S_k ω_k / Σ S_k;
+- modes below it broaden the bands instead: Gaussian σ² = Σ S_k ω_k² coth(ω_k / 2kT).
+
+`<workdir>/08_vibronic/<fragment>/vibronic.json` lists every mode (ω_k, S_k, d_k)
+and the summary; `vibronic.txt` lists the summary and the most displaced modes and
+warns about low-frequency modes with S > 1 (large-amplitude distortions such as
+torsions, where one effective mode is too crude). With `system.enabled` the summary
+is also written to `diabatic.json` (`fragments[].vibronic`). A failed vibronic run does
+not hold up `diabatic.json`: it is written without that fragment's parameters, and the
+next run adds them once the vibronic stage is done. Changing only the
+summary settings (`cutoff`, `temperature`, `freq_scale`, `min_frequency`) reuses the
+Hessian and gradient stored in `vibronic.npz`. `freq_scale` scales the frequencies
+only; S and λ (= Σ g_k² / 2ω_k², the relaxation energy of the excited state) do not
+change with it.
+
+The Hessian has no dispersion correction, whatever `td.xc` is (as in the `td` stage;
+PySCF's wB97X-D lacks its dispersion term). It would cancel in the excitation-energy
+gradient, which is the same in both states, but not in the Hessian: soft
+low-frequency modes (torsions) may come out slightly off, and with them their S and
+the width σ.
+
+The vibronic TDDFT solves fewer roots than the `td` stage (`vibronic.nstates`, default
+`td.state` + 2). If its excitation energy lies more than 0.02 eV from the `td` stage's, the log
+warns that it may be another state; raise `vibronic.nstates` then.
+
+The Hessian dominates the cost (for a 65-atom BODIPY fragment 7.5 h of 10.9 h on a
+full node, see [Validation](#vibronic-parameters-against-experiment)); with
+`--slurm` the vibronic stage runs as its own array job in parallel with the fragment
+TDDFT, one whole node per fragment by default (`slurm.vibronic_cpus`,
+`slurm.vibronic_mem`, `slurm.vibronic_partition`, `slurm.time_vibronic`). `vibronic.response_grid: [75, 302]` halves the
+TDDFT part for a small change in the weakest modes.
+
+Memory: holding the two-electron integrals in memory takes about nao⁴ bytes (168 GB
+at 640 basis functions), and the Hessian needs more on top. `vibronic.eri: auto`
+keeps them in memory when they fit, but drops them before the Hessian unless they
+take at most half of `resources.memory_mb`; the Hessian then recomputes them
+(`direct`: slower, little memory; `incore`: always in memory; with
+`td.density_fit` the option does not apply). The converged SCF and then the gradients
+are recorded in `vibronic_partial.npz`, so a rerun after a killed job restarts from
+its own SCF and, if the gradients were done, goes straight to the Hessian (the killed
+run's log is kept as `vibronic_previous.log`).
 
 ## Validation
 
@@ -305,6 +376,66 @@ below the end sites. The 4 × 4 tetramer Hamiltonian reproduces the four lowest
 whole-system states within 4 meV. With the isolated-fragment site energies,
 Coulomb couplings place the trimer S1 0.2 eV too high, so the site energies
 matter more than the couplings.
+
+### Vibronic parameters against experiment
+
+BODIPY monomer (fragment 1 of the dimer with its cap, 65 atoms; ωB97X-D/6-31G(d),
+full TDDFT S1) against its absorption and emission in toluene (Schaefer et al.,
+Nat. Commun. 15 (2024), source data). The band shapes are computed from the modes
+(displaced oscillators at 295 K); only the 0–0 energy and one Gaussian width, which
+stands in for the modes left out, are fitted. Scale 1 means the computed S fit as
+they are:
+
+| Modes taken from the calculation | Absorption: best scale on all S | Emission: best scale on all S |
+|---|---|---|
+| all | 0.43 | 0.60 |
+| ≥ 150 cm⁻¹ | 0.76 | 1.05 |
+| ≥ 400 cm⁻¹ | 0.99 | 1.35 |
+
+The high-frequency factors reproduce the measured vibronic structure without
+scaling (S_eff 0.16 at ω_eff 1321 cm⁻¹; the absorption shoulder at 2.6 eV). The
+low-frequency modes are overestimated by the harmonic vertical-gradient model: those
+below 400 cm⁻¹ give a Gaussian width of 487 cm⁻¹ at 295 K, while the fitted width,
+which also holds the solvent broadening, is 230–290 cm⁻¹. The largest part comes from
+two torsions of the meso aryl group (62 and 129 cm⁻¹, S 1.1 and 1.7, flagged in
+`vibronic.txt`; 348 cm⁻¹ on their own). When `vibronic.txt` warns about strong
+low-frequency modes, use S_eff and ω_eff with a width from experiment, or take
+`sigma_low` as an upper bound.
+
+Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6 and 10
+roots, Hessian 7.5 h; the default `vibronic.nstates` now solves 3 roots). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
+on 256 GB nodes `vibronic.eri: auto` recomputes them for the Hessian. The default
+Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
+`vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
+the summary values within 0.4 % and single weakly displaced modes (S > 0.01) within
+11 % (measured at Davidson 1e-5).
+
+Quaterrylene (parent C40H20, 60 atoms, geometry optimized with ωB97X-D/6-31G(d))
+against the absorption of 1,1'-dihexylquaterrylene in toluene (Cravcenco et al.,
+J. Am. Chem. Soc. 143 (2021) 19232; measured S ≈ 0.5 at about 1400 cm⁻¹).
+ωB97X-D gives the right progression shape and spacing (ω_eff 1455 cm⁻¹) but twice
+the vibronic strength (S_eff 1.00); the best scale is 0.52 whichever modes are
+taken. Cost on a full node: 10.5 h (Hessian 6.9 h with the integrals recomputed),
+peak 189 GB from the TDDFT with the integrals in memory, on a 256 GB node.
+
+**Choice of functional.** The same two runs with B3LYP (same geometries, basis,
+state and the faster settings, Davidson 1e-4 and `response_grid: [75, 302]`; about
+7.5 h each) show that the better functional depends on the dye. Best scale on all S
+(1 = computed S fit as they are) and rms of the unscaled fit:
+
+| Dye, spectrum, modes | ωB97X-D: S_eff, scale, rms | B3LYP: S_eff, scale, rms |
+|---|---|---|
+| BODIPY absorption, ≥ 150 cm⁻¹ | 0.16, 0.76, 0.060 | 0.84, 0.34, 0.185 |
+| BODIPY absorption, ≥ 400 cm⁻¹ | 0.16, 0.99, 0.031 | 0.84, 0.35, 0.182 |
+| BODIPY emission, ≥ 400 cm⁻¹ | 0.16, 1.35, 0.035 | 0.84, 0.41, 0.141 |
+| quaterrylene absorption, ≥ 50 cm⁻¹ | 1.00, 0.52, 0.178 | 0.45, 1.15, 0.038 |
+| quaterrylene absorption, ≥ 400 cm⁻¹ | 1.00, 0.52, 0.190 | 0.45, 1.15, 0.041 |
+
+ωB97X-D fits BODIPY and B3LYP fits quaterrylene without scaling; the other
+functional overestimates the vibronic strength 2–3 times (for BODIPY a 0–1
+shoulder at 60 % of the 0–0 peak instead of 23 %). Choose the functional with a
+measured spectrum of the dye or a close relative; a best scale far from 1 shows a
+poor choice.
 
 ## Working from cube or charge files
 
@@ -573,6 +704,15 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `system.nstates` | `0` | whole-system states; 0: four per fragment. LE + CT needs n² for n fragments |
 | `system.include_ct` | `true` | add HOMO→LUMO charge-transfer states between every fragment pair |
 | `system.memory_mb` | `null` | PySCF memory for the whole-system run (MB); null: resources.memory_mb |
+| `vibronic.enabled` | `false` | compute vibronic parameters (ground-state Hessian + excitation-energy gradient per fragment; about as long as the td stage or longer) |
+| `vibronic.cutoff` | `800.0` | cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width |
+| `vibronic.temperature` | `298.15` | K; temperature of the width from the low-frequency modes |
+| `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S and the reorganization energy are unscaled |
+| `vibronic.min_frequency` | `50.0` | cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³) |
+| `vibronic.davidson_tol` | `0.0001` | TDDFT convergence for the excited-state gradient (1e-4 gives the S of 1e-6) |
+| `vibronic.nstates` | `null` | TDDFT roots solved for the excited-state gradient (only td.state is used; the td and system stages keep their own); null: td.state + 2 |
+| `vibronic.response_grid` | `null` | grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly displaced modes up to ~11 %; null: td.grid |
+| `vibronic.eri` | `auto` | two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take at most half of resources.memory_mb; not used with td.density_fit |
 | `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
 | `resources.memory_mb` | `16000` | PySCF memory (MB) |
 | `resources.tmpdir` | `null` | PySCF scratch directory; null: default |
@@ -590,8 +730,12 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `slurm.system_cpus` | `128` | CPUs of the whole-system job |
 | `slurm.system_mem` | `'0'` | memory of the whole-system job ("0": whole node) |
 | `slurm.time_system` | `'24:00:00'` | time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h) |
+| `slurm.vibronic_partition` | `null` | partition of the fragment vibronic jobs; null: slurm.partition |
+| `slurm.vibronic_cpus` | `128` | CPUs of one fragment vibronic job (a 65-atom BODIPY takes about 11 h on 128 cores) |
+| `slurm.vibronic_mem` | `'0'` | memory of one fragment vibronic job ("0": whole node) |
 | `slurm.time_opt` | `'24:00:00'` | time limit of the optimization job |
 | `slurm.time_td` | `'12:00:00'` | time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores) |
+| `slurm.time_vibronic` | `'24:00:00'` | time limit of one fragment vibronic job (Hessian + excited-state gradient) |
 | `slurm.time_analysis` | `'02:00:00'` | time limit of the analysis and diabatize jobs |
 | `slurm.setup` | `[]` | shell lines run before eecc, e.g. ["module load python", "source venv/bin/activate"] |
 <!-- options:end -->
@@ -648,6 +792,7 @@ src/eecc/
     ├── couplings.py      # Pairwise couplings via the EECC methods
     ├── system.py         # Whole-system TDDFT and diabatization stages
     ├── diabatize.py      # Projection diabatization onto fragment LE/CT states
+    ├── vibronic.py       # Normal modes and Huang-Rhys factors (vibronic stage)
     ├── pipeline.py       # Restartable stage runner
     └── slurm.py          # Slurm job submission
 ```

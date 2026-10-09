@@ -20,16 +20,21 @@ from eecc.qm.structure import (
 )
 
 
-STAGES = ("opt", "fragments", "td", "transition", "couplings", "system", "diabatize")
+# Stage directories are numbered in this order; new stages go at the end so existing work dirs keep their names.
+STAGES = ("opt", "fragments", "td", "transition", "couplings", "system", "diabatize", "vibronic")
+# Order in which 'all' runs the stages: the optional, slow vibronic stage after the core results, and
+# diabatize last because it copies the vibronic parameters (of the fragments whose vibronic stage is done;
+# finishing the vibronic stage later invalidates diabatize, so the next run adds them).
+RUN_ORDER = ("opt", "fragments", "td", "transition", "couplings", "system", "vibronic", "diabatize")
 # Stages whose results each stage uses (a rerun invalidates everything that depends on it).
 DEPENDS = {
     "fragments": ("opt",), "td": ("fragments",), "transition": ("td",), "couplings": ("transition",),
-    "system": ("opt",), "diabatize": ("system", "td"),
+    "system": ("opt",), "diabatize": ("system", "td", "vibronic"), "vibronic": ("fragments",),
 }
 # Output format of the diabatize stage; raising it reruns older results (2: diabatic transition dipoles;
-# 3: format_version, units, conventions, state types, fragment centres and axes).
-DIABATIZE_FORMAT = "3"
-PER_FRAGMENT = ("td", "transition")
+# 3: format_version, units, conventions, state types, fragment centres and axes; 4: fragments[].vibronic).
+DIABATIZE_FORMAT = "4"
+PER_FRAGMENT = ("td", "transition", "vibronic")
 
 
 def _file_hash(path: str) -> str:
@@ -77,11 +82,16 @@ class Pipeline:
             return _combine(h, cfg.section_hash("td", ignore=("nstates", "state")),
                             cfg.section_hash("system", ignore=("include_ct", "enabled")))
         if stage == "diabatize":
+            vib = [self.expected_hash("vibronic")] if cfg.vibronic.enabled else []
             return _combine(self.expected_hash("system"), self.expected_hash("td"),
-                            cfg.section_hash("system", ignore=("enabled",)), "format " + DIABATIZE_FORMAT)
+                            cfg.section_hash("system", ignore=("enabled",)), "format " + DIABATIZE_FORMAT, *vib)
         h = _combine(h, cfg.section_hash("fragments"))
         if stage == "fragments":
             return h
+        if stage == "vibronic":  # the td method and state, not the td results
+            from eecc.qm.vibronic import TD_UNUSED
+            return _combine(h, cfg.section_hash("td", ignore=TD_UNUSED),
+                            cfg.section_hash("vibronic", ignore=("enabled", "eri")))
         h = _combine(h, cfg.section_hash("td"))
         if stage == "td":
             return h
@@ -105,6 +115,8 @@ class Pipeline:
         A rerun (for example with --force) may produce different results under the
         same settings, so stages built on the previous results must run again.
         """
+        if stage == "vibronic" and not self.cfg.vibronic.enabled:
+            return  # diabatize uses the vibronic results only when the stage is enabled
         dependents, grew = {stage}, True
         while grew:
             new = {s for s, deps in DEPENDS.items() if dependents.intersection(deps)} - dependents
@@ -260,6 +272,45 @@ class Pipeline:
                  f"({time.time() - t0:.0f} s)")
         self._mark_done("transition", fragment)
 
+    def run_vibronic(self, fragment: str, force: bool = False) -> None:
+        if self.is_done("vibronic", fragment) and not force:
+            self.log(f"[vibronic] {fragment} up to date")
+            return
+        if not self.is_done("fragments"):
+            raise RuntimeError("run the 'fragments' stage first")
+        from eecc.qm.vibronic import run_vibronic
+        marker = os.path.join(self.stage_dir("vibronic", fragment), ".done")
+        if os.path.exists(marker):  # a forced rerun that fails must not leave the old results marked current
+            os.remove(marker)
+        t0 = time.time()
+        # the td SCF as a guess only once that stage is finished (under Slurm it may still be writing)
+        chk = os.path.join(self.stage_dir("td", fragment), "scf.chk") if self.is_done("td", fragment) else None
+        out = run_vibronic(self.load_fragment_structure(fragment), self.cfg, self.stage_dir("vibronic", fragment),
+                           fragment, self._fragment_charge(fragment), guess_chk=chk, log=self.log, force=force)
+        s = out["summary"]
+        eff = f"S_eff = {s['S_eff']:.3f} at {s['omega_eff_cm']:.0f} cm-1" if s["omega_eff_cm"] else "no high modes"
+        self.log(f"[vibronic] {fragment}: {eff}, reorganization {s['reorganization_eV']:.4f} eV, "
+                 f"width {s['sigma_low_cm']:.0f} cm-1 ({time.time() - t0:.0f} s)")
+        if s["strong_low_modes"]:
+            self.log(f"[vibronic] {fragment}: WARNING low-frequency modes with S > 1, see vibronic.txt")
+        self._check_vibronic_state(fragment)
+        self._mark_done("vibronic", fragment)
+
+    def _check_vibronic_state(self, fragment: str) -> None:
+        """Warn when the vibronic stage found another td.state than the td stage (it solves fewer roots)."""
+        if not self.is_done("td", fragment):
+            return
+        try:
+            with open(os.path.join(self.stage_dir("td", fragment), "td.json")) as f:
+                e_td = json.load(f)["excitation_energies_eV"][self.cfg.td.state - 1]
+            with open(os.path.join(self.stage_dir("vibronic", fragment), "vibronic.json")) as f:
+                e_vib = json.load(f)["excitation_energy_eV"]
+        except (OSError, ValueError, KeyError, IndexError):
+            return
+        if abs(e_td - e_vib) > 0.02:  # grids and Davidson tolerances differ by meV, other states by more
+            self.log(f"[vibronic] {fragment}: WARNING S{self.cfg.td.state} at {e_vib:.3f} eV, but {e_td:.3f} eV "
+                     "in the td stage: a different state? Raise vibronic.nstates")
+
     def run_couplings(self, force: bool = False) -> None:
         if self.is_done("couplings") and not force:
             self.log("[couplings] up to date")
@@ -300,6 +351,14 @@ class Pipeline:
         missing = [n for n in self.fragment_names() if not self.is_done("td", n)]
         if missing:
             raise RuntimeError(f"td stage not finished for {missing}")
+        if self.cfg.vibronic.enabled:
+            missing = [n for n in self.fragment_names() if not self.is_done("vibronic", n)]
+            if missing:
+                self.log(f"[diabatize] WARNING vibronic stage not finished for {missing}: diabatic.json "
+                         "without their vibronic parameters (run again once the vibronic stage is done)")
+            for n in self.fragment_names():
+                if n not in missing:
+                    self._check_vibronic_state(n)  # under Slurm the td stage may have finished after vibronic
         from eecc.qm.system import run_diabatization
         d = self.stage_dir("diabatize")
         run_diabatization(self, d)
@@ -320,6 +379,7 @@ class Pipeline:
             "couplings": ["couplings.json", "couplings.txt"],
             "system": ["system_td.npz", "system_td.json", "system.xyz"],
             "diabatize": ["diabatic.json", "diabatic.txt"],
+            "vibronic": ["vibronic.npz", "vibronic.json", "vibronic.txt"],
         }[stage]
         ok = os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
         if ok and stage == "diabatize":  # a result in an older output format is not current
@@ -338,8 +398,12 @@ class Pipeline:
         first stage whose outputs are missing.
         """
         marked = []
-        for st in STAGES:
-            if st in ("td", "transition"):
+        for st in RUN_ORDER:
+            optional = {"system": self.cfg.system.enabled, "diabatize": self.cfg.system.enabled,
+                        "vibronic": self.cfg.vibronic.enabled}
+            if not optional.get(st, True):
+                continue
+            if st in PER_FRAGMENT:
                 if not os.path.exists(os.path.join(self.stage_dir("fragments"), "fragments.json")):
                     break
                 names = self.fragment_names()
@@ -360,17 +424,27 @@ class Pipeline:
         os.makedirs(self.root, exist_ok=True)
         with open(os.path.join(self.root, "config.resolved.json"), "w") as f:
             json.dump(self.cfg.to_dict(), f, indent=2)
-        todo = STAGES if stage == "all" else (stage,)
+        todo = RUN_ORDER if stage == "all" else (stage,)
+        vib_error = None
         for st in todo:
             if st == "opt":
                 self.run_opt(force)
             elif st == "fragments":
                 self.run_fragments(force)
-            elif st in ("td", "transition"):
+            elif st in PER_FRAGMENT:
+                if st == "vibronic" and stage != st and not self.cfg.vibronic.enabled:
+                    continue
                 names = self.fragment_names()
                 selected = names if fragment is None else [names[fragment - 1]]
+                run_one = {"td": self.run_td, "transition": self.run_transition, "vibronic": self.run_vibronic}[st]
                 for n in selected:
-                    (self.run_td if st == "td" else self.run_transition)(n, force)
+                    try:
+                        run_one(n, force)
+                    except Exception as exc:  # noqa: BLE001 (the optional stage must not block diabatize)
+                        if st != "vibronic" or stage != "all":
+                            raise
+                        self.log(f"[vibronic] {n}: FAILED ({exc}); continuing without it")
+                        vib_error = vib_error or exc
             elif st == "couplings":
                 self.run_couplings(force)
             elif st in ("system", "diabatize"):
@@ -378,3 +452,5 @@ class Pipeline:
                     (self.run_system if st == "system" else self.run_diabatize)(force)
             else:
                 raise ValueError(f"unknown stage '{st}'")
+        if vib_error is not None:
+            raise vib_error

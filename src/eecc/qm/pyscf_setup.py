@@ -106,3 +106,21 @@ def build_rks(
     if density_fit:
         mf = mf.density_fit()
     return mf
+
+
+def make_td(mf, method: str, nstates: int, conv_tol: float):
+    """TDA or full TDDFT object of a converged *mf* (not yet run)."""
+    td = mf.TDA() if method == "tda" else mf.TDDFT()
+    td.nstates = nstates
+    td.conv_tol = conv_tol
+    return td
+
+
+def set_grid(mf, grid: Sequence[int]) -> None:
+    """Rebuild the DFT integration grid of a converged *mf* with another [radial, angular] size.
+
+    with_non0tab keeps PySCF's screening of negligible basis functions, as the SCF builds its grid;
+    a plain build() drops it and makes every later XC evaluation on the grid slower.
+    """
+    mf.grids.atom_grid = tuple(grid)
+    mf.grids.build(with_non0tab=True)
