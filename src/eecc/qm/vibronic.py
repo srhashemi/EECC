@@ -187,7 +187,7 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
         "basis": td_cfg.basis, "cartesian": use_cartesian(td_cfg.basis, td_cfg.cart),
         "excitation_energy_eV": float(data["excitation_eV"]),
         # the gradients (TDDFT, S0 and S1) used these; grad_ground in vibronic.npz is on gradient_grid
-        "davidson_tol": vc.davidson_tol, "td_nstates": td_roots(cfg), "gradient_grid": list(vc.response_grid or td_cfg.grid),
+        "davidson_tol": vc.davidson_tol, "gradient_nstates": td_roots(cfg), "gradient_grid": list(vc.response_grid or td_cfg.grid),
         "min_frequency_cm": vc.min_frequency, "freq_scale": vc.freq_scale, "summary": summary,
         "modes": {"freq_cm": res["freq_cm"].tolist(),
                   "S": [None if not v else float(s) for s, v in zip(res["S"], res["valid"])],
@@ -340,10 +340,10 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
     how = ("density fitting" if not use_eri else "integrals in memory" if incore or mf._eri is not None
            else "integrals direct" if incore is False else "integrals as PySCF chooses")
     log(f"[vibronic] {name}: ground-state Hessian ({mol.natm} atoms, {mol.nao} basis functions, {how})")
-    if resolve_xc(td_cfg.xc) != td_cfg.xc:
-        # it cancels in the excitation-energy gradient (the same in both states), not in the Hessian
-        log(f"[vibronic] {name}: note: '{td_cfg.xc}' has no dispersion term in PySCF; the frequencies of "
-            "soft low-frequency modes (torsions) are slightly off")
+    # no dispersion correction (as in the td stage): it cancels in the excitation-energy gradient, the same in
+    # both states, but not in the Hessian
+    log(f"[vibronic] {name}: note: Hessian without dispersion correction; soft low-frequency modes (torsions) "
+        "may be slightly off")
     hess = mf.Hessian().kernel()
     if incore is False and getattr(mf, "_eri", None) is not None:
         log(f"[vibronic] {name}: WARNING PySCF held the two-electron integrals in memory despite "

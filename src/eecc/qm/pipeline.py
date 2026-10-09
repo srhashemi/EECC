@@ -279,6 +279,9 @@ class Pipeline:
         if not self.is_done("fragments"):
             raise RuntimeError("run the 'fragments' stage first")
         from eecc.qm.vibronic import run_vibronic
+        marker = os.path.join(self.stage_dir("vibronic", fragment), ".done")
+        if os.path.exists(marker):  # a forced rerun that fails must not leave the old results marked current
+            os.remove(marker)
         t0 = time.time()
         # the td SCF as a guess only once that stage is finished (under Slurm it may still be writing)
         chk = os.path.join(self.stage_dir("td", fragment), "scf.chk") if self.is_done("td", fragment) else None
@@ -290,7 +293,23 @@ class Pipeline:
                  f"width {s['sigma_low_cm']:.0f} cm-1 ({time.time() - t0:.0f} s)")
         if s["strong_low_modes"]:
             self.log(f"[vibronic] {fragment}: WARNING low-frequency modes with S > 1, see vibronic.txt")
+        self._check_vibronic_state(fragment)
         self._mark_done("vibronic", fragment)
+
+    def _check_vibronic_state(self, fragment: str) -> None:
+        """Warn when the vibronic stage found another td.state than the td stage (it solves fewer roots)."""
+        if not self.is_done("td", fragment):
+            return
+        try:
+            with open(os.path.join(self.stage_dir("td", fragment), "td.json")) as f:
+                e_td = json.load(f)["excitation_energies_eV"][self.cfg.td.state - 1]
+            with open(os.path.join(self.stage_dir("vibronic", fragment), "vibronic.json")) as f:
+                e_vib = json.load(f)["excitation_energy_eV"]
+        except (OSError, ValueError, KeyError, IndexError):
+            return
+        if abs(e_td - e_vib) > 0.02:  # grids and Davidson tolerances differ by meV, other states by more
+            self.log(f"[vibronic] {fragment}: WARNING S{self.cfg.td.state} at {e_vib:.3f} eV, but {e_td:.3f} eV "
+                     "in the td stage: a different state? Raise vibronic.nstates")
 
     def run_couplings(self, force: bool = False) -> None:
         if self.is_done("couplings") and not force:
@@ -337,6 +356,9 @@ class Pipeline:
             if missing:
                 self.log(f"[diabatize] WARNING vibronic stage not finished for {missing}: diabatic.json "
                          "without their vibronic parameters (run again once the vibronic stage is done)")
+            for n in self.fragment_names():
+                if n not in missing:
+                    self._check_vibronic_state(n)  # under Slurm the td stage may have finished after vibronic
         from eecc.qm.system import run_diabatization
         d = self.stage_dir("diabatize")
         run_diabatization(self, d)

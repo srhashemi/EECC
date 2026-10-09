@@ -950,7 +950,7 @@ def test_vibronic_key_and_outputs_record_the_gradient_settings(tmp_path):
         vibronic.calc_key(cfg, FORMALDEHYDE, 0))))
     out = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "v"), "h2co")  # summary only: no QM
     assert out["davidson_tol"] == 1e-4 and out["gradient_grid"] == list(cfg.td.grid)
-    assert out["td_nstates"] == cfg.td.state + 2
+    assert out["gradient_nstates"] == cfg.td.state + 2
     # the roots solved for the gradient follow vibronic.nstates, not td.nstates
     from eecc.qm.pipeline import Pipeline
     key, h = vibronic.calc_key(cfg, FORMALDEHYDE, 0), Pipeline(cfg).expected_hash("vibronic")
@@ -1128,6 +1128,33 @@ def test_slurm_jobs_for_vibronic_stage(tmp_path, monkeypatch):
     ok, after_any = dia[2].removeprefix("--dependency=").split(",")
     assert after_any == "afterany:" + jobs["vib"] and jobs["vib"] not in ok and jobs["system"] in ok
     assert jobs["prep"] in next(c for c in calls if c[-1].endswith("vib.sh"))[2]
+    # resubmitted after a failed vibronic task: diabatize (done without it) runs again after vibronic
+    pipe = Pipeline(cfg)
+    monkeypatch.setattr(pipe, "is_done", lambda st, frag=None: st != "vibronic")
+    monkeypatch.setattr(pipe, "fragment_names", lambda: ["frag1", "frag2"])
+    scripts = slurm.submit(pipe, str(tmp_path / "c.yaml"), dry_run=True)
+    names = {os.path.basename(p) for p in scripts}
+    assert {"diabatize.sh", "vib.sh"} <= names and not {"prep.sh", "frag.sh", "system.sh"} & names
+
+
+def test_vibronic_state_check(tmp_path):
+    from eecc.qm.pipeline import Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    logs = []
+    pipe = Pipeline(_small_config(tmp_path, geo, vibronic={"enabled": True}), log=logs.append)
+    pipe.is_done = lambda st, frag=None: True
+    for st, name, data in (("td", "td.json", {"excitation_energies_eV": [3.00, 3.20]}),
+                           ("vibronic", "vibronic.json", {"excitation_energy_eV": 3.005})):
+        os.makedirs(pipe.stage_dir(st, "frag1"), exist_ok=True)
+        json.dump(data, open(os.path.join(pipe.stage_dir(st, "frag1"), name), "w"))
+    pipe._check_vibronic_state("frag1")
+    assert not logs
+    json.dump({"excitation_energy_eV": 3.20}, open(os.path.join(pipe.stage_dir("vibronic", "frag1"),
+                                                                "vibronic.json"), "w"))
+    pipe._check_vibronic_state("frag1")
+    assert len(logs) == 1 and "a different state?" in logs[0]
 
 
 def test_failed_vibronic_stage_does_not_block_diabatize(tmp_path, monkeypatch):

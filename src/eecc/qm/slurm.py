@@ -122,7 +122,7 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
                                        cpus=s.analysis_cpus, mem=s.analysis_mem)
         if pipe.is_done("system"):
             scripts.pop("system")
-        if pipe.is_done("diabatize"):
+        if pipe.is_done("diabatize") and not vib_todo:  # finishing vibronic invalidates diabatize
             scripts.pop("diabatize")
     # Skip jobs whose stages are already complete (e.g. when resubmitting).
     if prep_done:

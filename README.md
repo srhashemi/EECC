@@ -278,10 +278,15 @@ Hessian and gradient stored in `vibronic.npz`. `freq_scale` scales the frequenci
 only; S and λ (= Σ g_k² / 2ω_k², the relaxation energy of the excited state) do not
 change with it.
 
-With wB97X-D (the default `td.xc`) PySCF has no dispersion term. It cancels in the
-excitation-energy gradient, which is the same in both states, but not in the Hessian:
-soft low-frequency modes (torsions) come out slightly off, and with them their S and
+The Hessian has no dispersion correction, whatever `td.xc` is (as in the `td` stage;
+PySCF's wB97X-D lacks its dispersion term). It would cancel in the excitation-energy
+gradient, which is the same in both states, but not in the Hessian: soft
+low-frequency modes (torsions) may come out slightly off, and with them their S and
 the width σ.
+
+The vibronic TDDFT solves fewer roots than the `td` stage (`vibronic.nstates`, default
+`td.state` + 2). If its excitation energy lies more than 0.02 eV from the `td` stage's, the log
+warns that it may be another state; raise `vibronic.nstates` then.
 
 The Hessian dominates the cost (for a 65-atom BODIPY fragment 7.5 h of 10.9 h on a
 full node, see [Validation](#vibronic-parameters-against-experiment)); with
