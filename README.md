@@ -270,14 +270,24 @@ A one-mode Holstein model needs one vibration, so the modes are also summarized:
 and the summary; `vibronic.txt` lists the summary and the most displaced modes and
 warns about low-frequency modes with S > 1 (large-amplitude distortions such as
 torsions, where one effective mode is too crude). With `system.enabled` the summary
-is also written to `diabatic.json` (`fragments[].vibronic`). Changing only the
+is also written to `diabatic.json` (`fragments[].vibronic`). A failed vibronic run does
+not hold up `diabatic.json`: it is written without that fragment's parameters, and the
+next run adds them once the vibronic stage is done. Changing only the
 summary settings (`cutoff`, `temperature`, `freq_scale`, `min_frequency`) reuses the
-Hessian and gradient stored in `vibronic.npz`.
+Hessian and gradient stored in `vibronic.npz`. `freq_scale` scales the frequencies
+only; S and λ (= Σ g_k² / 2ω_k², the relaxation energy of the excited state) do not
+change with it.
+
+With wB97X-D (the default `td.xc`) PySCF has no dispersion term. It cancels in the
+excitation-energy gradient, which is the same in both states, but not in the Hessian:
+soft low-frequency modes (torsions) come out slightly off, and with them their S and
+the width σ.
 
 The Hessian dominates the cost (for a 65-atom BODIPY fragment 7.5 h of 10.9 h on a
 full node, see [Validation](#vibronic-parameters-against-experiment)); with
-`--slurm` the vibronic stage runs as its own array job (`slurm.time_vibronic`) in
-parallel with the fragment TDDFT. `vibronic.response_grid: [75, 302]` halves the
+`--slurm` the vibronic stage runs as its own array job in parallel with the fragment
+TDDFT, one whole node per fragment by default (`slurm.vibronic_cpus`,
+`slurm.vibronic_mem`, `slurm.vibronic_partition`, `slurm.time_vibronic`). `vibronic.response_grid: [75, 302]` halves the
 TDDFT part for a small change in the weakest modes.
 
 Memory: holding the two-electron integrals in memory takes about nao⁴ bytes (168 GB
@@ -387,8 +397,8 @@ two torsions of the meso aryl group (62 and 129 cm⁻¹, S 1.1 and 1.7, flagged 
 low-frequency modes, use S_eff and ω_eff with a width from experiment, or take
 `sigma_low` as an upper bound.
 
-Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6, Hessian
-7.5 h). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
+Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6 and 10
+roots, Hessian 7.5 h; the default `vibronic.nstates` now solves 3 roots). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
 on 256 GB nodes `vibronic.eri: auto` recomputes them for the Hessian. The default
 Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
 `vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
@@ -692,9 +702,10 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `vibronic.enabled` | `false` | compute vibronic parameters (ground-state Hessian + excitation-energy gradient per fragment; about as long as the td stage or longer) |
 | `vibronic.cutoff` | `800.0` | cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width |
 | `vibronic.temperature` | `298.15` | K; temperature of the width from the low-frequency modes |
-| `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled |
+| `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S and the reorganization energy are unscaled |
 | `vibronic.min_frequency` | `50.0` | cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³) |
 | `vibronic.davidson_tol` | `0.0001` | TDDFT convergence for the excited-state gradient (1e-4 gives the S of 1e-6) |
+| `vibronic.nstates` | `null` | TDDFT roots solved for the excited-state gradient (only td.state is used; the td and system stages keep their own); null: td.state + 2 |
 | `vibronic.response_grid` | `null` | grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly displaced modes up to ~11 %; null: td.grid |
 | `vibronic.eri` | `auto` | two-electron integrals in memory (incore: fast, ~nao⁴ bytes, 168 GB at 640 basis functions) or recomputed (direct); auto: in memory if they fit, but for the Hessian only if they take at most half of resources.memory_mb; not used with td.density_fit |
 | `resources.threads` | `0` | threads; 0: OMP_NUM_THREADS or all cores |
@@ -714,6 +725,9 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `slurm.system_cpus` | `128` | CPUs of the whole-system job |
 | `slurm.system_mem` | `'0'` | memory of the whole-system job ("0": whole node) |
 | `slurm.time_system` | `'24:00:00'` | time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h) |
+| `slurm.vibronic_partition` | `null` | partition of the fragment vibronic jobs; null: slurm.partition |
+| `slurm.vibronic_cpus` | `128` | CPUs of one fragment vibronic job (a 65-atom BODIPY takes about 11 h on 128 cores) |
+| `slurm.vibronic_mem` | `'0'` | memory of one fragment vibronic job ("0": whole node) |
 | `slurm.time_opt` | `'24:00:00'` | time limit of the optimization job |
 | `slurm.time_td` | `'12:00:00'` | time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores) |
 | `slurm.time_vibronic` | `'24:00:00'` | time limit of one fragment vibronic job (Hessian + excited-state gradient) |

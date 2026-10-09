@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict
 import numpy as np
 
 from eecc.constants import AU_TO_DEBYE, EV_TO_CM, HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks, set_grid
+from eecc.qm.pyscf_setup import build_mol, build_rks, make_td, set_grid
 from eecc.qm.structure import Structure, read_xyz, save_xyz
 
 
@@ -41,9 +41,7 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
 
     if td_cfg.response_grid:
         set_grid(mf, td_cfg.response_grid)
-    td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
-    td.nstates = nstates
-    td.conv_tol = td_cfg.davidson_tol
+    td = make_td(mf, td_cfg.method, nstates, td_cfg.davidson_tol)
 
     # log every response call: the TDDFT of a large system runs for many hours
     progress = {"calls": 0, "vectors": 0}
@@ -187,7 +185,7 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
         n_own = len(meta[name]["parent_atoms_1based"])
         fragments.append({"name": name, "natoms_own": n_own,
                           **fragment_geometry(pipe.load_fragment_structure(name), n_own)})
-        if cfg.vibronic.enabled:  # one-mode Holstein parameters of the fragment's LE state
+        if cfg.vibronic.enabled and pipe.is_done("vibronic", name):  # one-mode Holstein parameters of its LE state
             with open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")) as f:
                 fragments[-1]["vibronic"] = json.load(f)["summary"]
 

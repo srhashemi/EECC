@@ -9,7 +9,7 @@ from typing import Any, Dict
 import numpy as np
 
 from eecc.constants import AU_TO_DEBYE, HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, set_grid, use_cartesian
+from eecc.qm.pyscf_setup import build_mol, build_rks, make_td, resolve_xc, set_grid, use_cartesian
 from eecc.qm.structure import Structure
 
 
@@ -55,9 +55,7 @@ def run_excited_states(
 
     if td_cfg.response_grid:
         set_grid(mf, td_cfg.response_grid)  # XC kernel of the response only
-    td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
-    td.nstates = td_cfg.nstates
-    td.conv_tol = td_cfg.davidson_tol
+    td = make_td(mf, td_cfg.method, td_cfg.nstates, td_cfg.davidson_tol)
     td.kernel()
     conv = np.atleast_1d(td.converged)
     k = td_cfg.state - 1

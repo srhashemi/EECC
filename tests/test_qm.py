@@ -866,6 +866,10 @@ def test_vibronic_summary():
     coth = 1 / np.tanh(freq[1:3] / (2 * KB_CM * 300))
     assert hot["sigma_low_cm"] == pytest.approx(np.sqrt((S[1:3] * freq[1:3] ** 2 * coth).sum()))
     assert summarize(freq, S * 4, valid)["strong_low_modes"] == [{"freq_cm": 200.0, "S": 2.0}]
+    # freq_scale scales the frequencies, not the reorganization energy (sum g^2 / 2 omega^2)
+    sc = summarize(0.9 * freq, S, valid, cutoff_cm=800, temperature_K=0.0, freq_scale=0.9)
+    assert sc["omega_eff_cm"] == pytest.approx(0.9 * s["omega_eff_cm"])
+    assert sc["reorganization_cm"] == pytest.approx(s["reorganization_cm"])
 
 
 @pytest.mark.parametrize("method", ["tda", "tddft"])
@@ -935,7 +939,8 @@ def test_vibronic_key_and_outputs_record_the_gradient_settings(tmp_path):
     cfg = _small_config(tmp_path, geo)
     td = cfg.td
     old = [cfg.section_hash("td", ignore=vibronic.TD_UNUSED), vibronic.resolve_xc(td.xc),
-           vibronic.use_cartesian(td.basis, td.cart), cfg.vibronic.davidson_tol, 0, list(FORMALDEHYDE.symbols),
+           vibronic.use_cartesian(td.basis, td.cart), cfg.vibronic.davidson_tol, td.state + 2, 0,
+           list(FORMALDEHYDE.symbols),
            np.round(np.asarray(FORMALDEHYDE.coords, float), 8).tolist()]
     assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) == hashlib.sha256(json.dumps(old).encode()).hexdigest()[:16]
     raw = {"hessian": np.eye(12).reshape(4, 3, 4, 3).transpose(0, 2, 1, 3) * 0.5, "grad_ground": np.zeros((4, 3)),
@@ -945,6 +950,18 @@ def test_vibronic_key_and_outputs_record_the_gradient_settings(tmp_path):
         vibronic.calc_key(cfg, FORMALDEHYDE, 0))))
     out = vibronic.run_vibronic(FORMALDEHYDE, cfg, str(tmp_path / "v"), "h2co")  # summary only: no QM
     assert out["davidson_tol"] == 1e-4 and out["gradient_grid"] == list(cfg.td.grid)
+    assert out["td_nstates"] == cfg.td.state + 2
+    # the roots solved for the gradient follow vibronic.nstates, not td.nstates
+    from eecc.qm.pipeline import Pipeline
+    key, h = vibronic.calc_key(cfg, FORMALDEHYDE, 0), Pipeline(cfg).expected_hash("vibronic")
+    cfg.td.nstates += 5
+    assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) == key and Pipeline(cfg).expected_hash("vibronic") == h
+    cfg.vibronic.nstates = cfg.td.state + 2  # the default, given explicitly
+    assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) == key
+    cfg.vibronic.nstates = 8
+    assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) != key
+    with pytest.raises(ValueError, match="vibronic.nstates"):
+        config_from_dict(dict(cfg.to_dict(), vibronic={"nstates": 0}))
 
 
 def test_vibronic_eri_choice():
@@ -1098,7 +1115,7 @@ def test_slurm_jobs_for_vibronic_stage(tmp_path, monkeypatch):
     vib = next(p for p in scripts if p.endswith("vib.sh"))
     text = open(vib).read()
     assert "--array=1-2" in text and "--stage vibronic --fragment $SLURM_ARRAY_TASK_ID" in text
-    assert "#SBATCH -t 24:00:00" in text
+    assert "#SBATCH -t 24:00:00" in text and "#SBATCH -c 128" in text and "#SBATCH --mem=0" in text
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -1107,4 +1124,47 @@ def test_slurm_jobs_for_vibronic_stage(tmp_path, monkeypatch):
     monkeypatch.setattr(slurm.subprocess, "run", fake_run)
     jobs = dict(line.split() for line in slurm.submit(Pipeline(cfg), str(tmp_path / "c.yaml")))
     dia = next(c for c in calls if c[-1].endswith("diabatize.sh"))
-    assert jobs["vib"] in dia[2] and jobs["prep"] in next(c for c in calls if c[-1].endswith("vib.sh"))[2]
+    # diabatize waits for the vibronic jobs to end, but a failed one must not cancel it
+    ok, after_any = dia[2].removeprefix("--dependency=").split(",")
+    assert after_any == "afterany:" + jobs["vib"] and jobs["vib"] not in ok and jobs["system"] in ok
+    assert jobs["prep"] in next(c for c in calls if c[-1].endswith("vib.sh"))[2]
+
+
+def test_failed_vibronic_stage_does_not_block_diabatize(tmp_path, monkeypatch):
+    from eecc.qm import system
+    from eecc.qm.pipeline import PER_FRAGMENT, Pipeline
+
+    geo = tmp_path / "dimer.xyz"
+    save_xyz(_stacked_dimer(), str(geo))
+    logs = []
+    pipe = Pipeline(_small_config(tmp_path, geo, system={"enabled": True}, vibronic={"enabled": True}),
+                    log=logs.append)
+    ran = []
+    for st in ("opt", "fragments", "couplings", "system"):
+        monkeypatch.setattr(pipe, f"run_{st}", lambda force=False, st=st: ran.append(st))
+    for st in PER_FRAGMENT:
+        monkeypatch.setattr(pipe, f"run_{st}", lambda n, force=False, st=st: ran.append(st))
+    monkeypatch.setattr(pipe, "fragment_names", lambda: ["frag1", "frag2"])
+
+    def failing_vibronic(n, force=False):
+        raise RuntimeError("TDDFT state 1 did not converge")
+    monkeypatch.setattr(pipe, "run_vibronic", failing_vibronic)
+    monkeypatch.setattr(pipe, "run_diabatize", lambda force=False: ran.append("diabatize"))
+    with pytest.raises(RuntimeError, match="did not converge"):
+        pipe.run("all")
+    assert ran[-1] == "diabatize" and any("FAILED" in m for m in logs)
+    with pytest.raises(RuntimeError, match="did not converge"):  # the stage on its own still fails
+        pipe.run("vibronic")
+
+    # diabatize without the vibronic results: a warning, not an error
+    del pipe.run_diabatize
+    monkeypatch.setattr(pipe, "is_done", lambda st, frag=None: st in ("system", "td"))
+    d = pipe.stage_dir("diabatize")
+
+    def fake_diabatization(p, workdir):
+        os.makedirs(workdir, exist_ok=True)
+        open(os.path.join(workdir, "diabatic.txt"), "w").write("H\n")
+    monkeypatch.setattr(system, "run_diabatization", fake_diabatization)
+    pipe.run_diabatize()
+    assert os.path.exists(os.path.join(d, ".done"))
+    assert any("vibronic stage not finished for ['frag1', 'frag2']" in m for m in logs)

@@ -6,7 +6,8 @@
 4. with system.enabled: system (whole-system TDDFT, one node) after prep, in
    parallel with the fragments, and diabatize after both
 5. with vibronic.enabled: vibronic (Hessian + excited-state gradient), one array
-   task per fragment after prep; diabatize waits for it
+   task per fragment after prep; diabatize waits for it to end, but runs even if it
+   failed (then without the vibronic parameters of the failed fragments)
 
 Stages that are already complete are skipped, so resubmitting after a failure
 reruns only the missing jobs and array tasks.
@@ -112,7 +113,8 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
         if vib_todo:
             scripts["vib"] = _script(pipe, "vib", s.time_vibronic,
                                      [f"{run} --stage vibronic --fragment $SLURM_ARRAY_TASK_ID"],
-                                     cpus=s.cpus, mem=s.mem, array=_array_spec(vib_todo))
+                                     cpus=s.vibronic_cpus, mem=s.vibronic_mem, partition=s.vibronic_partition,
+                                     array=_array_spec(vib_todo))
     if pipe.cfg.system.enabled:
         scripts["system"] = _script(pipe, "system", s.time_system, [f"{run} --stage system"],
                                     cpus=s.system_cpus, mem=s.system_mem, partition=s.system_partition)
@@ -135,20 +137,23 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     if dry_run:
         return list(paths.values())
 
-    def sbatch(path: str, deps: List[str]) -> str:
+    def sbatch(path: str, deps: List[str], any_deps: List[str]) -> str:
         cmd = ["sbatch", "--parsable"]
-        if deps:
-            cmd.append("--dependency=afterok:" + ":".join(deps))
+        cond = [f"{kind}:" + ":".join(ids_) for kind, ids_ in (("afterok", deps), ("afterany", any_deps)) if ids_]
+        if cond:
+            cmd.append("--dependency=" + ",".join(cond))
         cmd.append(path)
         return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip().split(";")[0]
 
     # job -> jobs it waits for (only those submitted now; finished stages need no wait)
     waits = {"prep": [], "frag": ["prep"], "vib": ["prep"], "analysis": ["frag"], "system": ["prep"],
-             "diabatize": ["system", "frag", "analysis", "vib"]}
+             "diabatize": ["system", "frag", "analysis"]}
     ids: dict = {}
     for key in ("prep", "frag", "vib", "analysis", "system", "diabatize"):
         if key in paths:
             # analysis also needs prep when the fragment jobs are skipped
             deps = [ids[w] for w in waits[key] if w in ids] or ([ids["prep"]] if "prep" in ids and key != "prep" else [])
-            ids[key] = sbatch(paths[key], deps)
+            # diabatize waits for the optional vibronic jobs to end, not to succeed
+            any_deps = [ids["vib"]] if key == "diabatize" and "vib" in ids else []
+            ids[key] = sbatch(paths[key], deps, any_deps)
     return [f"{key} {job}" for key, job in ids.items()]

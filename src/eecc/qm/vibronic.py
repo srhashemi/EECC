@@ -22,14 +22,13 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from eecc.constants import HARTREE_TO_EV
-from eecc.qm.pyscf_setup import build_mol, build_rks, resolve_xc, set_grid, use_cartesian
+from eecc.constants import ANG_TO_BOHR, EV_TO_CM, HARTREE_TO_EV
+from eecc.qm.pyscf_setup import build_mol, build_rks, make_td, resolve_xc, set_grid, use_cartesian
 from eecc.qm.structure import Structure
 
 AMU_TO_ME = 1822.888486209  # atomic mass unit -> electron masses
 HARTREE_TO_CM = 219474.6313632
 KB_CM = 0.6950348004  # Boltzmann constant (cm^-1 / K)
-ANG_TO_BOHR = 1.0 / 0.529177210903
 
 
 def _masses_amu(symbols) -> np.ndarray:
@@ -94,13 +93,16 @@ def huang_rhys(symbols, coords_ang, hessian, grad_excitation, min_freq_cm: float
     return {"freq_cm": freq, "g_au": g, "d": d, "S": 0.5 * d ** 2, "valid": valid}
 
 
-def summarize(freq_cm, S, valid, cutoff_cm: float = 800.0, temperature_K: float = 298.15) -> Dict[str, Any]:
+def summarize(freq_cm, S, valid, cutoff_cm: float = 800.0, temperature_K: float = 298.15,
+              freq_scale: float = 1.0) -> Dict[str, Any]:
     """Compress the modes for a one-mode Holstein model.
 
     Modes at or above *cutoff_cm* form one effective mode (S_eff = sum S_k, omega_eff = S-weighted
     mean frequency): the vibronic progression. Modes below it are too closely spaced to resolve and
     give a Gaussian width instead: sigma^2 = sum S_k omega_k^2 coth(omega_k / 2kT) (standard
-    deviation; at 0 K the coth is 1). *freq_cm* as returned by :func:`huang_rhys` (already scaled).
+    deviation; at 0 K the coth is 1). *freq_cm* as returned by :func:`huang_rhys` (already scaled by
+    *freq_scale*). The reorganization energy uses the unscaled frequencies: lambda = sum S_k omega_k =
+    sum g_k^2 / (2 omega_k^2), the energy the excited state gains by relaxing, which no scaling changes.
     """
     w = np.asarray(freq_cm, float)
     S = np.asarray(S, float)
@@ -111,8 +113,8 @@ def summarize(freq_cm, S, valid, cutoff_cm: float = 800.0, temperature_K: float 
     coth = 1.0 / np.tanh(w[lo] / (2 * KB_CM * temperature_K)) if temperature_K > 0 else np.ones(lo.sum())
     sigma0 = float(np.sqrt((S[lo] * w[lo] ** 2).sum()))
     sigma_t = float(np.sqrt((S[lo] * w[lo] ** 2 * coth).sum()))
-    lam_hi, lam_lo = float((S[hi] * w[hi]).sum()), float((S[lo] * w[lo]).sum())
-    cm_to_ev = 1.0 / 8065.544006
+    lam_hi, lam_lo = float((S[hi] * w[hi]).sum()) / freq_scale, float((S[lo] * w[lo]).sum()) / freq_scale
+    cm_to_ev = 1.0 / EV_TO_CM
     strong_low = [{"freq_cm": float(a), "S": float(b)} for a, b in zip(w[lo], S[lo]) if b > 1.0]
     return {
         "cutoff_cm": cutoff_cm, "temperature_K": temperature_K,
@@ -178,14 +180,14 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
 
     res = huang_rhys(structure.symbols, structure.coords, data["hessian"],
                      data["grad_excited"] - data["grad_ground"], vc.min_frequency, vc.freq_scale)
-    summary = summarize(res["freq_cm"], res["S"], res["valid"], vc.cutoff, vc.temperature)
+    summary = summarize(res["freq_cm"], res["S"], res["valid"], vc.cutoff, vc.temperature, vc.freq_scale)
     summary["freq_scale"] = vc.freq_scale
     out = {
         "name": name, "state": td_cfg.state, "method": td_cfg.method, "xc": resolve_xc(td_cfg.xc),
         "basis": td_cfg.basis, "cartesian": use_cartesian(td_cfg.basis, td_cfg.cart),
         "excitation_energy_eV": float(data["excitation_eV"]),
         # the gradients (TDDFT, S0 and S1) used these; grad_ground in vibronic.npz is on gradient_grid
-        "davidson_tol": vc.davidson_tol, "gradient_grid": list(vc.response_grid or td_cfg.grid),
+        "davidson_tol": vc.davidson_tol, "td_nstates": td_roots(cfg), "gradient_grid": list(vc.response_grid or td_cfg.grid),
         "min_frequency_cm": vc.min_frequency, "freq_scale": vc.freq_scale, "summary": summary,
         "modes": {"freq_cm": res["freq_cm"].tolist(),
                   "S": [None if not v else float(s) for s, v in zip(res["S"], res["valid"])],
@@ -198,8 +200,14 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
     return out
 
 
-# td settings that the vibronic calculation does not use (its response runs on td.grid or vibronic.response_grid)
-TD_UNUSED = ("response_grid", "davidson_tol")
+# td settings that the vibronic calculation does not use (its response runs on td.grid or vibronic.response_grid,
+# with vibronic.nstates roots)
+TD_UNUSED = ("response_grid", "davidson_tol", "nstates")
+
+
+def td_roots(cfg) -> int:
+    """TDDFT roots of the excited-state gradient: the state and two more, so near-degenerate states keep their order."""
+    return cfg.vibronic.nstates or cfg.td.state + 2
 
 # gradients and excitation energy, saved before the Hessian so a killed job does not repeat them
 PARTIAL = "vibronic_partial.npz"
@@ -261,7 +269,7 @@ def calc_key(cfg, structure: Structure, charge: int) -> str:
 
     td = cfg.td
     payload = [cfg.section_hash("td", ignore=TD_UNUSED), resolve_xc(td.xc), use_cartesian(td.basis, td.cart),
-               cfg.vibronic.davidson_tol, charge, list(structure.symbols),
+               cfg.vibronic.davidson_tol, td_roots(cfg), charge, list(structure.symbols),
                np.round(np.asarray(structure.coords, float), 8).tolist()]
     if cfg.vibronic.response_grid:  # only when set, so that keys without it stay as they were
         payload.append(["response_grid", list(cfg.vibronic.response_grid)])
@@ -310,9 +318,7 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
         if rg:
             set_grid(mf, rg)
         g0 = mf.nuc_grad_method().kernel()
-        td = mf.TDA() if td_cfg.method == "tda" else mf.TDDFT()
-        td.nstates = td_cfg.nstates
-        td.conv_tol = cfg.vibronic.davidson_tol
+        td = make_td(mf, td_cfg.method, td_roots(cfg), cfg.vibronic.davidson_tol)
         td.kernel()
         k = td_cfg.state - 1
         if not np.atleast_1d(td.converged)[k]:
@@ -334,6 +340,10 @@ def _compute(structure, cfg, workdir, name, charge, guess_chk, log, key: str = "
     how = ("density fitting" if not use_eri else "integrals in memory" if incore or mf._eri is not None
            else "integrals direct" if incore is False else "integrals as PySCF chooses")
     log(f"[vibronic] {name}: ground-state Hessian ({mol.natm} atoms, {mol.nao} basis functions, {how})")
+    if resolve_xc(td_cfg.xc) != td_cfg.xc:
+        # it cancels in the excitation-energy gradient (the same in both states), not in the Hessian
+        log(f"[vibronic] {name}: note: '{td_cfg.xc}' has no dispersion term in PySCF; the frequencies of "
+            "soft low-frequency modes (torsions) are slightly off")
     hess = mf.Hessian().kernel()
     if incore is False and getattr(mf, "_eri", None) is not None:
         log(f"[vibronic] {name}: WARNING PySCF held the two-electron integrals in memory despite "

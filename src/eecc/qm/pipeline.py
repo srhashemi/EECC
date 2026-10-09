@@ -23,7 +23,8 @@ from eecc.qm.structure import (
 # Stage directories are numbered in this order; new stages go at the end so existing work dirs keep their names.
 STAGES = ("opt", "fragments", "td", "transition", "couplings", "system", "diabatize", "vibronic")
 # Order in which 'all' runs the stages: the optional, slow vibronic stage after the core results, and
-# diabatize last because it copies the vibronic parameters.
+# diabatize last because it copies the vibronic parameters (of the fragments whose vibronic stage is done;
+# finishing the vibronic stage later invalidates diabatize, so the next run adds them).
 RUN_ORDER = ("opt", "fragments", "td", "transition", "couplings", "system", "vibronic", "diabatize")
 # Stages whose results each stage uses (a rerun invalidates everything that depends on it).
 DEPENDS = {
@@ -334,7 +335,8 @@ class Pipeline:
         if self.cfg.vibronic.enabled:
             missing = [n for n in self.fragment_names() if not self.is_done("vibronic", n)]
             if missing:
-                raise RuntimeError(f"vibronic stage not finished for {missing}")
+                self.log(f"[diabatize] WARNING vibronic stage not finished for {missing}: diabatic.json "
+                         "without their vibronic parameters (run again once the vibronic stage is done)")
         from eecc.qm.system import run_diabatization
         d = self.stage_dir("diabatize")
         run_diabatization(self, d)
@@ -401,6 +403,7 @@ class Pipeline:
         with open(os.path.join(self.root, "config.resolved.json"), "w") as f:
             json.dump(self.cfg.to_dict(), f, indent=2)
         todo = RUN_ORDER if stage == "all" else (stage,)
+        vib_error = None
         for st in todo:
             if st == "opt":
                 self.run_opt(force)
@@ -413,7 +416,13 @@ class Pipeline:
                 selected = names if fragment is None else [names[fragment - 1]]
                 run_one = {"td": self.run_td, "transition": self.run_transition, "vibronic": self.run_vibronic}[st]
                 for n in selected:
-                    run_one(n, force)
+                    try:
+                        run_one(n, force)
+                    except Exception as exc:  # noqa: BLE001 (the optional stage must not block diabatize)
+                        if st != "vibronic" or stage != "all":
+                            raise
+                        self.log(f"[vibronic] {n}: FAILED ({exc}); continuing without it")
+                        vib_error = vib_error or exc
             elif st == "couplings":
                 self.run_couplings(force)
             elif st in ("system", "diabatize"):
@@ -421,3 +430,5 @@ class Pipeline:
                     (self.run_system if st == "system" else self.run_diabatize)(force)
             else:
                 raise ValueError(f"unknown stage '{st}'")
+        if vib_error is not None:
+            raise vib_error

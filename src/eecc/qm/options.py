@@ -90,9 +90,11 @@ HELP: Dict[str, str] = {
                         "fragment; about as long as the td stage or longer)",
     "vibronic.cutoff": "cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width",
     "vibronic.temperature": "K; temperature of the width from the low-frequency modes",
-    "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S is unscaled",
+    "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S and the reorganization energy are unscaled",
     "vibronic.min_frequency": "cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³)",
     "vibronic.davidson_tol": "TDDFT convergence for the excited-state gradient (1e-4 gives the S of 1e-6)",
+    "vibronic.nstates": "TDDFT roots solved for the excited-state gradient (only td.state is used; the td and "
+                        "system stages keep their own); null: td.state + 2",
     "vibronic.response_grid": "grid of the excitation-energy gradient (TDDFT and both gradients; the Hessian keeps "
                               "td.grid), e.g. [75, 302]: about 2× faster TDDFT, summary within 0.4 %, single weakly "
                               "displaced modes up to ~11 %; null: td.grid",
@@ -115,6 +117,9 @@ HELP: Dict[str, str] = {
     "slurm.system_partition": "partition of the whole-system job (one full node; trimers and larger need more than 24 h); null: slurm.partition",
     "slurm.system_cpus": "CPUs of the whole-system job",
     "slurm.system_mem": "memory of the whole-system job (\"0\": whole node)",
+    "slurm.vibronic_partition": "partition of the fragment vibronic jobs; null: slurm.partition",
+    "slurm.vibronic_cpus": "CPUs of one fragment vibronic job (a 65-atom BODIPY takes about 11 h on 128 cores)",
+    "slurm.vibronic_mem": "memory of one fragment vibronic job (\"0\": whole node)",
     "slurm.time_system": "time limit of the whole-system job (BODIPY dimer 11 h, trimer 20 h, tetramer 47 h)",
     "slurm.time_opt": "time limit of the optimization job",
     "slurm.time_td": "time limit of one fragment TDDFT job (a 65-atom BODIPY takes about 1.5 h on 32 cores)",
