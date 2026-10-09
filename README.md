@@ -377,6 +377,58 @@ whole-system states within 4 meV. With the isolated-fragment site energies,
 Coulomb couplings place the trimer S1 0.2 eV too high, so the site energies
 matter more than the couplings.
 
+### Diabatization against published models
+
+Two systems with published diabatic Hamiltonians, computed with the projection of the
+`diabatize` stage.
+
+**Naphthalene–TCNE** (Mao, Montoya-Castillo and Markland, J. Chem. Phys. 153, 244111
+(2020)): the C2v cofacial complex at five distances, ωB97X-D/6-31+G(d), 24 states.
+The monomers were optimized here (B3LYP-D3BJ/def2-SVP), so the geometry is close to
+but not the same as theirs. Coupling of the naphthalene LE state of B1 symmetry with
+the naphthalene → TCNE CT state (meV):
+
+| Distance (Å) | Projection, TDA | Projection, full TDDFT | Published TDDFT/FCD | Published TDDFT/GMH | Published EOM-CCSD/GMH |
+|---|---|---|---|---|---|
+| 3.5 | 206.0 | 209.9 | 207.3 | 197.4 | 217.4 |
+| 3.9 | 122.1 | 124.2 | 125.6 | 114.2 | 128.4 |
+| 4.0 | 107.1 | 108.9 | 110.9 | 98.8 | 112.1 |
+| 4.5 | 55.2 | 56.0 | 57.2 | 48.5 | 57.8 |
+| 5.0 | 28.8 | 29.2 | 29.0 | 24.2 | 29.5 |
+
+The projection is within 1–3.5 % of the published TDDFT/FCD values and 2–5 % below
+EOM-CCSD. The other naphthalene LE state (B2) does not couple to this CT state by
+symmetry, and the projection gives 0.0 meV. The couplings are stable from 8 to 24
+states (completeness 0.99–1.00).
+
+The same TDDFT states were also diabatized by localization (GMH, Boys, Edmiston–
+Ruedenberg). The two-state GMH reproduces the published TDDFT/GMH values within 2–3 %
+and, as in the paper, lies 5–15 % below FCD and the projection. With four states
+(two naphthalene LE, the TCNE LE and the CT state) localization fails: it separates
+charge, not two states on one fragment, so Edmiston–Ruedenberg mixes the two
+naphthalene LE states 50:50 at every distance, and Boys partly mixes the second
+naphthalene LE state with the TCNE LE state. The projection assigns every diabatic state to one
+fragment state.
+
+**Dibenzo[g,p]chrysene (DBC) π-stacked dimer** (Ingham et al., J. Chem. Theory Comput.
+22, 2427 (2026)): their geometry, M06-2X/cc-pVDZ, the two halves of the dimer as
+monomers, and their eight diabatic states (S1 and S4 of each monomer, and four CT
+states). Their projection uses 60 dimer states. The monomer excitation energies agree
+with their Gaussian values within 1 meV. Largest deviation of the 8 × 8 Hamiltonian
+from theirs:
+
+| Dimer states | Site energies (meV) | Couplings (meV) |
+|---|---|---|
+| 30 | 28 | 9.2 |
+| 40 | 16 | 3.6 |
+| 50 | 14 | 2.1 |
+| 60 | 1 | 1.3 |
+
+With the same 60 states both projections give the same Hamiltonian (couplings up to
+87 meV; S1–S1 24 meV, S1–CT 55–75 meV). One CT site energy still moves by 14 meV
+between 50 and 60 states, so for such high diabatic states the result depends on
+`system.nstates` (see [Whole-system TDDFT](#whole-system-tddft-and-the-exciton-hamiltonian)).
+
 ### Vibronic parameters against experiment
 
 BODIPY monomer (fragment 1 of the dimer with its cap, 65 atoms; ωB97X-D/6-31G(d),
