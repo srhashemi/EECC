@@ -89,6 +89,7 @@ HELP: Dict[str, str] = {
     "vibronic.enabled": "compute vibronic parameters (ground-state Hessian + excitation-energy gradient per "
                         "fragment; about as long as the td stage or longer)",
     "vibronic.cutoff": "cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width",
+    "vibronic.groups": "the modes above the cutoff also as at most this many effective modes by frequency (modes_grouped)",
     "vibronic.temperature": "K; temperature of the width from the low-frequency modes",
     "vibronic.freq_scale": "scales the reported frequencies (e.g. 0.95 for hybrid functionals); S and the reorganization energy are unscaled",
     "vibronic.min_frequency": "cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³)",

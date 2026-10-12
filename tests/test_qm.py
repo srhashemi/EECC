@@ -872,6 +872,44 @@ def test_vibronic_summary():
     assert sc["reorganization_cm"] == pytest.approx(s["reorganization_cm"])
 
 
+def test_group_modes():
+    """Groups keep the total S and sum S omega; one group is the effective mode; the grouping is
+    the contiguous partition with the least S-weighted spread; weak bands join a neighbour."""
+    from itertools import combinations
+    from eecc.qm.vibronic import GROUP_MIN_S, group_modes, summarize
+
+    rng = np.random.default_rng(3)
+    w = np.sort(rng.uniform(800, 1700, 9))
+    S = rng.uniform(0.01, 0.2, 9)
+    for k in (1, 2, 3, 4):
+        g = group_modes(w, S, k)
+        assert len(g) == k and [x["omega_cm"] for x in g] == sorted(x["omega_cm"] for x in g)
+        assert sum(x["S"] for x in g) == pytest.approx(S.sum())
+        assert sum(x["S"] * x["omega_cm"] for x in g) == pytest.approx((S * w).sum())
+        assert all(x["omega_eV"] == pytest.approx(x["omega_cm"] / 8065.544, rel=1e-5) for x in g)
+
+        def spread(bounds):
+            edges = (0,) + bounds + (9,)
+            return sum(((S[a:b] * w[a:b] ** 2).sum() - (S[a:b] * w[a:b]).sum() ** 2 / S[a:b].sum())
+                       for a, b in zip(edges[:-1], edges[1:]))
+        brute = min(spread(c) for c in combinations(range(1, 9), k - 1)
+                    if all(S[a:b].sum() >= GROUP_MIN_S * S.sum() for a, b in
+                           zip((0,) + c, c + (9,))))
+        got = spread(tuple(np.cumsum([x["n_modes"] for x in g])[:-1]))
+        assert got == pytest.approx(brute, rel=1e-9)
+    one = group_modes(w, S, 1)[0]
+    s = summarize(w, S, np.ones(9, bool), cutoff_cm=800, groups=1)
+    assert one["omega_cm"] == pytest.approx(s["omega_eff_cm"]) and one["S"] == pytest.approx(s["S_eff"])
+    assert len(summarize(w, S, np.ones(9, bool), cutoff_cm=800)["modes_grouped"]) == 3  # default
+    # a weak band far away (C-H stretches) does not take a group of its own
+    w2, S2 = np.r_[1100, 1150, 1500, 1550, 3000, 3100], np.r_[0.1, 0.1, 0.1, 0.1, 0.001, 0.001]
+    g = group_modes(w2, S2, 3)
+    assert all(x["S"] >= GROUP_MIN_S * S2.sum() for x in g) and max(x["omega_cm"] for x in g) < 2000
+    assert len(group_modes(w2[:2], S2[:2], 3)) == 2 and group_modes([], [], 2) == []
+    with pytest.raises(ValueError):
+        group_modes(w, S, 0)
+
+
 @pytest.mark.parametrize("method", ["tda", "tddft"])
 def test_vibronic_gradient_matches_finite_differences(tmp_path, method):
     """The projected excitation-energy gradient equals the slope of the excitation energy along each mode."""
@@ -962,6 +1000,9 @@ def test_vibronic_key_and_outputs_record_the_gradient_settings(tmp_path):
     assert vibronic.calc_key(cfg, FORMALDEHYDE, 0) != key
     with pytest.raises(ValueError, match="vibronic.nstates"):
         config_from_dict(dict(cfg.to_dict(), vibronic={"nstates": 0}))
+    for bad in (0, 2.5, True):
+        with pytest.raises(ValueError, match="vibronic.groups"):
+            config_from_dict(dict(cfg.to_dict(), vibronic={"groups": bad}))
 
 
 def test_vibronic_eri_choice():
@@ -1083,6 +1124,21 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
     assert res["fragments"][0]["vibronic"]["cutoff_cm"] == 100.0
     assert pipe.is_done("diabatize")
+    # so does the number of grouped modes
+    pipe.cfg.vibronic.groups = 2
+    assert not pipe.is_done("vibronic", "frag1")
+    pipe.run()
+    g = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))["fragments"][0]["vibronic"]
+    assert 1 <= len(g["modes_grouped"]) <= 2 and sum(x["S"] for x in g["modes_grouped"]) == pytest.approx(g["S_eff"])
+    # a vibronic.json from before grouped modes: the diabatization groups its modes
+    vfile = os.path.join(pipe.stage_dir("vibronic", "frag1"), "vibronic.json")
+    vj = json.load(open(vfile))
+    del vj["summary"]["modes_grouped"]
+    json.dump(vj, open(vfile, "w"))
+    pipe.run_diabatize(force=True)
+    g2 = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))["fragments"][0]["vibronic"]
+    assert [(x["omega_cm"], x["S"], x["n_modes"]) for x in g2["modes_grouped"]] == \
+        [(pytest.approx(x["omega_cm"]), pytest.approx(x["S"]), x["n_modes"]) for x in g["modes_grouped"]]
     assert pipe.restamp()[-2:] == ["vibronic", "diabatize"] and pipe.is_done("diabatize")
 
     # --force recomputes the quantum chemistry instead of reusing vibronic.npz

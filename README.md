@@ -213,7 +213,7 @@ meant to be read by other programs, for example for spectra:
 | `completeness` | how well the computed whole-system states reproduce each diabatic state (0–1) |
 | `fragments` | per fragment: `name`, `natoms_own`, `center_ang` (centre of mass, Å), `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal) and `moments_amu_ang2`, from the fragment's own atoms without caps; two equal moments (a symmetric top) leave the two axes free to rotate in their plane |
 | `adiabatic_eV`, `pairs` | whole-system excitation energies; per fragment pair, the total and the Coulomb couplings (cm⁻¹) |
-| `fragments[].vibronic` | with `vibronic.enabled`: the fragment's Holstein parameters (`S_eff`, `omega_eff_cm`, `sigma_low_cm`, reorganization energies; see [Vibronic parameters](#vibronic-parameters)) |
+| `fragments[].vibronic` | with `vibronic.enabled`: the fragment's Holstein parameters (`S_eff`, `omega_eff_cm`, `sigma_low_cm`, reorganization energies, `modes_grouped`; see [Vibronic parameters](#vibronic-parameters)) |
 
 All positions and vectors are in the frame of `system.xyz`. The phase of each
 diabatic state (LE or CT) is arbitrary, so signs of couplings and dipoles are
@@ -264,6 +264,15 @@ A one-mode Holstein model needs one vibration, so the modes are also summarized:
 - modes at or above `vibronic.cutoff` (default 800 cm⁻¹; for π-conjugated dyes
   mostly C=C/C–N ring stretches at 1200–1600 cm⁻¹, too closely spaced to resolve)
   form one effective mode: S_eff = Σ S_k, ω_eff = Σ S_k ω_k / Σ S_k;
+- the same modes are also grouped into at most `vibronic.groups` (default 3)
+  effective modes by frequency (`modes_grouped`: `omega_cm`, `omega_eV`, `S`,
+  `n_modes`, counting the modes with S > 0), for a Holstein model with several
+  modes. Each group keeps Σ S_k and Σ S_k ω_k of its modes (ω scaled by
+  `freq_scale`), so the total S and Σ S ω are those of the effective mode. The groups are the split into adjacent frequency bands with
+  the least S-weighted spread Σ S_k (ω_k − ω_g)², found exactly by dynamic
+  programming; all `vibronic.groups` are used whenever possible. Every group carries at least 5 % of S_eff, so a weak band such
+  as the C–H stretches joins a neighbour instead of taking a group (the BODIPY
+  monomer below: S 0.031 at 930, 0.061 at 1258 and 0.070 at 1546 cm⁻¹);
 - modes below it broaden the bands instead: Gaussian σ² = Σ S_k ω_k² coth(ω_k / 2kT).
 
 `<workdir>/08_vibronic/<fragment>/vibronic.json` lists every mode (ω_k, S_k, d_k)
@@ -273,7 +282,7 @@ torsions, where one effective mode is too crude). With `system.enabled` the summ
 is also written to `diabatic.json` (`fragments[].vibronic`). A failed vibronic run does
 not hold up `diabatic.json`: it is written without that fragment's parameters, and the
 next run adds them once the vibronic stage is done. Changing only the
-summary settings (`cutoff`, `temperature`, `freq_scale`, `min_frequency`) reuses the
+summary settings (`cutoff`, `groups`, `temperature`, `freq_scale`, `min_frequency`) reuses the
 Hessian and gradient stored in `vibronic.npz`. `freq_scale` scales the frequencies
 only; S and λ (= Σ g_k² / 2ω_k², the relaxation energy of the excited state) do not
 change with it.
@@ -758,6 +767,7 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `system.memory_mb` | `null` | PySCF memory for the whole-system run (MB); null: resources.memory_mb |
 | `vibronic.enabled` | `false` | compute vibronic parameters (ground-state Hessian + excitation-energy gradient per fragment; about as long as the td stage or longer) |
 | `vibronic.cutoff` | `800.0` | cm⁻¹; modes above form the effective Holstein mode, modes below a Gaussian width |
+| `vibronic.groups` | `3` | the modes above the cutoff also as at most this many effective modes by frequency (modes_grouped) |
 | `vibronic.temperature` | `298.15` | K; temperature of the width from the low-frequency modes |
 | `vibronic.freq_scale` | `1.0` | scales the reported frequencies (e.g. 0.95 for hybrid functionals); S and the reorganization energy are unscaled |
 | `vibronic.min_frequency` | `50.0` | cm⁻¹; lower and imaginary modes get no S (S grows as 1/ω³) |

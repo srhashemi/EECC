@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import zipfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -93,12 +93,72 @@ def huang_rhys(symbols, coords_ang, hessian, grad_excitation, min_freq_cm: float
     return {"freq_cm": freq, "g_au": g, "d": d, "S": 0.5 * d ** 2, "valid": valid}
 
 
+GROUP_MIN_S = 0.05  # every grouped mode carries at least this fraction of the total S
+
+
+def group_modes(freq_cm, S, n_groups: int) -> List[Dict[str, float]]:
+    """Group modes into at most *n_groups* effective modes by frequency.
+
+    Each group of adjacent frequencies becomes one mode with S_g = sum S_k and omega_g the S-weighted
+    mean, so the total S and the reorganization energy sum S_k omega_k stay exact; the groups
+    minimize the S-weighted spread sum_g sum_k S_k (omega_k - omega_g)^2 that the grouping loses
+    (optimal 1-D clustering by dynamic programming). Every group carries at least GROUP_MIN_S of the
+    total S, so a band of weak modes (e.g. C-H stretches) joins its neighbour instead of taking a
+    group; fewer groups are returned when no grouping into n_groups meets that, otherwise exactly
+    n_groups (capped at the number of modes). Modes with S = 0 are left out (n_modes counts the
+    others). One group is the effective mode of summarize. Returns the groups by ascending frequency, each {omega_cm,
+    omega_eV, S, n_modes}.
+    """
+    if n_groups < 1:
+        raise ValueError("n_groups must be >= 1")
+    w = np.asarray(freq_cm, float)
+    S = np.asarray(S, float)
+    keep = (S > 0) & np.isfinite(w)
+    order = np.argsort(w[keep])
+    w, S = w[keep][order], S[keep][order]
+    n = len(w)
+    if n == 0:
+        return []
+    k_max = min(n_groups, n)
+    # prefix sums: the spread of modes i..j-1 is sum S w^2 - (sum S w)^2 / sum S
+    c0, c1, c2 = (np.concatenate([[0.0], np.cumsum(x)]) for x in (S, S * w, S * w * w))
+
+    min_s = GROUP_MIN_S * c0[n] * (1 - 1e-9)  # tolerance: equal shares of exactly 5 % stay feasible
+
+    best = np.full((k_max + 1, n + 1), np.inf)
+    cut = np.zeros((k_max + 1, n + 1), dtype=int)
+    best[0, 0] = 0.0
+    for j in range(1, n + 1):
+        i = np.arange(j)  # last group i..j-1, all i at once
+        s0 = c0[j] - c0[i]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            spread = np.maximum((c2[j] - c2[i]) - (c1[j] - c1[i]) ** 2 / s0, 0.0)
+        spread[s0 < min_s] = np.inf
+        for k in range(1, min(k_max, j) + 1):
+            total = best[k - 1, :j] + spread
+            m = int(np.argmin(total))
+            best[k, j], cut[k, j] = total[m], m
+    while k_max > 1 and not np.isfinite(best[k_max, n]):  # no grouping into k_max groups of GROUP_MIN_S each
+        k_max -= 1
+    bounds, j = [], n
+    for k in range(k_max, 0, -1):
+        bounds.append((cut[k, j], j))
+        j = cut[k, j]
+    groups = []
+    for i, j in reversed(bounds):
+        s_g = float(S[i:j].sum())
+        w_g = float((S[i:j] * w[i:j]).sum() / s_g)
+        groups.append({"omega_cm": w_g, "omega_eV": w_g / EV_TO_CM, "S": s_g, "n_modes": int(j - i)})
+    return groups
+
+
 def summarize(freq_cm, S, valid, cutoff_cm: float = 800.0, temperature_K: float = 298.15,
-              freq_scale: float = 1.0) -> Dict[str, Any]:
-    """Compress the modes for a one-mode Holstein model.
+              freq_scale: float = 1.0, groups: int = 3) -> Dict[str, Any]:
+    """Compress the modes for a Holstein model with one (or a few) high-frequency modes.
 
     Modes at or above *cutoff_cm* form one effective mode (S_eff = sum S_k, omega_eff = S-weighted
-    mean frequency): the vibronic progression. Modes below it are too closely spaced to resolve and
+    mean frequency): the vibronic progression; ``modes_grouped`` splits them into at most
+    *groups* effective modes by frequency (group_modes) for a several-mode Holstein model. Modes below it are too closely spaced to resolve and
     give a Gaussian width instead: sigma^2 = sum S_k omega_k^2 coth(omega_k / 2kT) (standard
     deviation; at 0 K the coth is 1). *freq_cm* as returned by :func:`huang_rhys` (already scaled by
     *freq_scale*). The reorganization energy uses the unscaled frequencies: lambda = sum S_k omega_k =
@@ -119,6 +179,7 @@ def summarize(freq_cm, S, valid, cutoff_cm: float = 800.0, temperature_K: float 
     return {
         "cutoff_cm": cutoff_cm, "temperature_K": temperature_K,
         "S_eff": s_eff, "omega_eff_cm": w_eff, "omega_eff_eV": w_eff * cm_to_ev if w_eff else None,
+        "modes_grouped": group_modes(w[hi], S[hi], groups),
         "reorganization_cm": lam_hi + lam_lo, "reorganization_eV": (lam_hi + lam_lo) * cm_to_ev,
         "reorganization_high_cm": lam_hi, "reorganization_low_cm": lam_lo,
         "sigma_low_0K_cm": sigma0, "sigma_low_cm": sigma_t, "sigma_low_eV": sigma_t * cm_to_ev,
@@ -143,6 +204,9 @@ def format_modes(res: Dict[str, Any], summary: Dict[str, Any], top: int = 15) ->
              f"{s['temperature_K']:g} K, {s['sigma_low_0K_cm']:.0f} cm-1 at 0 K",
              f"# {s['n_modes']} modes: {s['n_high']} high, {s['n_low']} low, {s['n_excluded']} excluded "
              "(below the minimum frequency or imaginary)"]
+    if len(s.get("modes_grouped") or []) > 1:
+        lines.append("# grouped modes: " + ", ".join(f"S {g['S']:.3f} at {g['omega_cm']:.0f} cm-1"
+                                                     for g in s["modes_grouped"]))
     if s["strong_low_modes"]:
         lines.append("# WARNING: low-frequency modes with S > 1: "
                      + ", ".join(f"{m['freq_cm']:.0f} cm-1 (S {m['S']:.2f})" for m in s["strong_low_modes"]))
@@ -180,7 +244,8 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
 
     res = huang_rhys(structure.symbols, structure.coords, data["hessian"],
                      data["grad_excited"] - data["grad_ground"], vc.min_frequency, vc.freq_scale)
-    summary = summarize(res["freq_cm"], res["S"], res["valid"], vc.cutoff, vc.temperature, vc.freq_scale)
+    summary = summarize(res["freq_cm"], res["S"], res["valid"], vc.cutoff, vc.temperature, vc.freq_scale,
+                        vc.groups)
     summary["freq_scale"] = vc.freq_scale
     out = {
         "name": name, "state": td_cfg.state, "method": td_cfg.method, "xc": resolve_xc(td_cfg.xc),
