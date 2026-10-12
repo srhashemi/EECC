@@ -32,8 +32,9 @@ DEPENDS = {
     "system": ("opt",), "diabatize": ("system", "td", "vibronic"), "vibronic": ("fragments",),
 }
 # Output format of the diabatize stage; raising it reruns older results (2: diabatic transition dipoles;
-# 3: format_version, units, conventions, state types, fragment centres and axes; 4: fragments[].vibronic).
-DIABATIZE_FORMAT = "4"
+# 3: format_version, units, conventions, state types, fragment centres and axes; 4: fragments[].vibronic;
+# 5: fragments[].vibronic.modes_grouped).
+DIABATIZE_FORMAT = "5"
 PER_FRAGMENT = ("td", "transition", "vibronic")
 
 

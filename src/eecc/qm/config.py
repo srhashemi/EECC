@@ -130,6 +130,7 @@ class VibronicConfig:
     # vertical gradient): ground-state Hessian + excitation-energy gradient, with the td method.
     enabled: bool = False
     cutoff: float = 800.0  # cm-1; modes above form the effective mode, modes below a Gaussian width
+    groups: int = 3  # the modes above the cutoff also as at most this many effective modes by frequency
     temperature: float = 298.15  # K, for the width from low-frequency modes
     freq_scale: float = 1.0  # scales the reported frequencies (not S or the reorganization energy)
     min_frequency: float = 50.0  # cm-1; lower (and imaginary) modes get no S
@@ -417,6 +418,8 @@ def validate(cfg: PipelineConfig) -> None:
     _check_grid("vibronic.response_grid", v.response_grid, optional=True)
     if v.nstates is not None and v.nstates < cfg.td.state:
         raise ValueError("vibronic.nstates must be >= td.state (or null: td.state + 2)")
+    if isinstance(v.groups, bool) or not isinstance(v.groups, int) or v.groups < 1:
+        raise ValueError(f"vibronic.groups must be a whole number >= 1, not {v.groups!r}")
     if v.eri not in ("auto", "incore", "direct"):
         raise ValueError("vibronic.eri must be 'auto', 'incore' or 'direct'")
     if cfg.transition.cube.spacing <= 0 or cfg.transition.cube.margin <= 0:
