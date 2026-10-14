@@ -308,8 +308,13 @@ Memory: holding the two-electron integrals in memory takes about nao⁴ bytes (1
 at 640 basis functions), and the Hessian needs more on top. `vibronic.eri: auto`
 keeps them in memory when they fit, but drops them before the Hessian unless they
 take at most half of `resources.memory_mb`; the Hessian then recomputes them
-(`direct`: slower, little memory; `incore`: always in memory; with
-`td.density_fit` the option does not apply). The converged SCF and then the gradients
+(`direct`: slower, less memory; `incore`: always in memory; with
+`td.density_fit` the option does not apply). Even with the integrals recomputed, the
+Hessian needs much memory that `resources.memory_mb` does not limit: a 65-atom BODIPY
+fragment (624 basis functions, 128 threads) peaked at 215-260 GB with `memory_mb`
+200000 or 120000 alike, so on 256 GB nodes it ran out of memory in two of three runs.
+For fragments of this size, give the vibronic jobs larger-memory nodes
+(`slurm.vibronic_partition`). The converged SCF and then the gradients
 are recorded in `vibronic_partial.npz`, so a rerun after a killed job restarts from
 its own SCF and, if the gradients were done, goes straight to the Hessian (the killed
 run's log is kept as `vibronic_previous.log`).
@@ -465,7 +470,8 @@ low-frequency modes, use S_eff and ω_eff with a width from experiment, or take
 
 Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6 and 10
 roots, Hessian 7.5 h; the default `vibronic.nstates` now solves 3 roots). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
-on 256 GB nodes `vibronic.eri: auto` recomputes them for the Hessian. The default
+with `vibronic.eri: auto` on 256 GB nodes the Hessian recomputes them but can still run
+out of memory (see [Memory](#vibronic-parameters)). The default
 Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
 `vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
 the summary values within 0.4 % and single weakly displaced modes (S > 0.01) within
