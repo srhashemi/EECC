@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 
@@ -207,6 +208,30 @@ def _cmd_run(args):
     pipe.run(stage=args.stage, fragment=args.fragment, force=args.force)
 
 
+def _cmd_paths(args):
+    import json
+
+    try:
+        import yaml  # noqa: F401  (load_config needs it)
+        from eecc.qm.config import load_config
+        from eecc.qm.pipeline import STAGES, Pipeline
+    except ImportError as exc:
+        sys.exit(f"eecc paths needs PyYAML: pip install 'eecc[qm]' ({exc})")
+    try:
+        cfg = load_config(args.config)
+    except (OSError, ValueError) as exc:
+        sys.exit(f"error in {args.config}: {exc}")
+    pipe = Pipeline(cfg, log=lambda *a, **k: None)
+    out = {"workdir": pipe.root, "stages": {s: pipe.stage_dir(s) for s in STAGES},
+           "diabatic_json": os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")}
+    out["diabatic_json_exists"] = os.path.exists(out["diabatic_json"])
+    try:  # finished for this config (an existing file may come from earlier settings)
+        out["diabatize_done"] = bool(pipe.is_done("diabatize"))
+    except (OSError, ValueError, KeyError):  # earlier stages not run yet
+        out["diabatize_done"] = False
+    print(json.dumps(out, indent=2))
+
+
 def main() -> None:
     """Entry point for the ``eecc`` command."""
     parser = argparse.ArgumentParser(
@@ -334,6 +359,11 @@ def main() -> None:
                    help="Mark stages with existing outputs as up to date (after upgrading EECC "
                         "with unchanged settings)")
     p.set_defaults(func=_cmd_run)
+
+    p = sub.add_parser("paths", help="Print, as JSON, where 'eecc run' puts its outputs for a config and "
+                                     "whether diabatic.json is current (needs PyYAML)")
+    p.add_argument("config", help="Pipeline YAML config file")
+    p.set_defaults(func=_cmd_paths)
 
     args = parser.parse_args()
     if not hasattr(args, 'func'):

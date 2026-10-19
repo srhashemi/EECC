@@ -1,0 +1,279 @@
+{
+  "format_version": 5,
+  "units": {
+    "H_eV": "eV",
+    "adiabatic_eV": "eV",
+    "transition_dipoles_au": "e*bohr (atomic units)",
+    "oscillator_strengths": "dimensionless",
+    "completeness": "dimensionless (0 to 1)",
+    "fragments[].center_ang": "Angstrom",
+    "fragments[].principal_axes": "unit vectors",
+    "fragments[].moments_amu_ang2": "amu*Angstrom^2",
+    "fragments[].vibronic": "S dimensionless; *_cm in cm^-1, *_eV in eV, temperature_K in K",
+    "pairs[].J_total_cm-1, pairs[].<method>_cm-1": "cm^-1"
+  },
+  "conventions": {
+    "frame": "Cartesian frame of system.xyz (the whole-system geometry)",
+    "signs": "the phase of every LE state follows its fragment's transition density and that of every CT state the fragment HOMO and LUMO, so the signs of couplings and dipoles are arbitrary per state but consistent with each other",
+    "ct_states": "CT(a->b): one electron from the HOMO of fragment a to the LUMO of fragment b",
+    "principal_axes": "rows, ordered by increasing moment of inertia (moments_amu_ang2; fragment atoms without caps, atomic masses); for a planar molecule the last axis is the plane normal; each axis has its largest component positive (the first one on a tie); axes with equal moments (a symmetric top) are any orthonormal pair in their plane"
+  },
+  "labels": [
+    "LE(frag1)",
+    "LE(frag2)",
+    "CT(frag1->frag2)",
+    "CT(frag2->frag1)"
+  ],
+  "states": [
+    {
+      "label": "LE(frag1)",
+      "type": "LE",
+      "fragment": "frag1"
+    },
+    {
+      "label": "LE(frag2)",
+      "type": "LE",
+      "fragment": "frag2"
+    },
+    {
+      "label": "CT(frag1->frag2)",
+      "type": "CT",
+      "donor": "frag1",
+      "acceptor": "frag2"
+    },
+    {
+      "label": "CT(frag2->frag1)",
+      "type": "CT",
+      "donor": "frag2",
+      "acceptor": "frag1"
+    }
+  ],
+  "H_eV": [
+    [
+      2.9730215552395625,
+      0.13004937052362966,
+      -0.0077843593062937155,
+      0.14107634409296693
+    ],
+    [
+      0.13004937052362966,
+      2.9730497467491195,
+      0.1410798470990196,
+      -0.007783112514270962
+    ],
+    [
+      -0.0077843593062937155,
+      0.1410798470990196,
+      3.6903566675300508,
+      0.008736220673106872
+    ],
+    [
+      0.14107634409296693,
+      -0.007783112514270962,
+      0.008736220673106872,
+      3.690365356425886
+    ]
+  ],
+  "completeness": [
+    0.9562142060357066,
+    0.9562100782382458,
+    0.16583678429972157,
+    0.16583204724134568
+  ],
+  "transition_dipoles_au": [
+    [
+      3.070168336237815,
+      0.1197691302456103,
+      1.0075912224767587
+    ],
+    [
+      -3.0701577782658465,
+      0.12002828386428144,
+      -1.007777348895895
+    ],
+    [
+      -0.15074866538652218,
+      0.2919136346690613,
+      -0.21866708485241196
+    ],
+    [
+      0.15076097568315802,
+      0.2918625092783414,
+      0.21864925104975683
+    ]
+  ],
+  "oscillator_strengths": [
+    0.7615557468565191,
+    0.7615900953391979,
+    0.014082043856606562,
+    0.014079009041400274
+  ],
+  "fragments": [
+    {
+      "name": "frag1",
+      "natoms_own": 64,
+      "center_ang": [
+        -4.257866442555899,
+        -0.04022660795285649,
+        -0.1802290972266567
+      ],
+      "principal_axes": [
+        [
+          -0.14063241656101608,
+          0.8793013468796239,
+          0.4550293010212511
+        ],
+        [
+          0.9818150149695649,
+          0.18305607492818984,
+          -0.05029661829783069
+        ],
+        [
+          0.1275217620350408,
+          -0.4396812650176993,
+          0.8890548832327024
+        ]
+      ],
+      "moments_amu_ang2": [
+        2493.2628156675805,
+        7636.343972743387,
+        7888.16844759613
+      ],
+      "vibronic": {
+        "cutoff_cm": 800.0,
+        "temperature_K": 298.15,
+        "S_eff": 0.16751704432713876,
+        "omega_eff_cm": 1347.6864680703038,
+        "omega_eff_eV": 0.1670918250607464,
+        "reorganization_cm": 368.44174503873853,
+        "reorganization_eV": 0.04568095403913894,
+        "reorganization_high_cm": 225.76045381081815,
+        "reorganization_low_cm": 142.68129122792038,
+        "sigma_low_0K_cm": 198.47134923047176,
+        "sigma_low_cm": 266.6462720938168,
+        "sigma_low_eV": 0.03305992402935961,
+        "n_modes": 189,
+        "n_high": 120,
+        "n_low": 64,
+        "n_excluded": 5,
+        "strong_low_modes": [],
+        "freq_scale": 1.0,
+        "modes_grouped": [
+          {
+            "omega_cm": 922.4535825508653,
+            "omega_eV": 0.11436966705093263,
+            "S": 0.024016473439867254,
+            "n_modes": 33
+          },
+          {
+            "omega_cm": 1256.8514023182192,
+            "omega_eV": 0.1558297123397059,
+            "S": 0.062439546476119975,
+            "n_modes": 23
+          },
+          {
+            "omega_cm": 1543.6412407358607,
+            "omega_eV": 0.19138712027205332,
+            "S": 0.08106102441115154,
+            "n_modes": 64
+          }
+        ]
+      }
+    },
+    {
+      "name": "frag2",
+      "natoms_own": 64,
+      "center_ang": [
+        4.25785775839453,
+        -0.04066852656265976,
+        0.18022968749248405
+      ],
+      "principal_axes": [
+        [
+          0.14082733466927694,
+          0.8792547783051899,
+          -0.4550590034681656
+        ],
+        [
+          0.981847274821874,
+          -0.18302379781526304,
+          -0.04978170706331299
+        ],
+        [
+          0.12705743085237972,
+          0.43978781731736294,
+          0.8890686615804333
+        ]
+      ],
+      "moments_amu_ang2": [
+        2493.2704139157076,
+        7636.5224330741075,
+        7887.9533120761735
+      ],
+      "vibronic": {
+        "cutoff_cm": 800.0,
+        "temperature_K": 298.15,
+        "S_eff": 0.1675129866470071,
+        "omega_eff_cm": 1347.6865853855325,
+        "omega_eff_eV": 0.16709183960598087,
+        "reorganization_cm": 368.47433313310637,
+        "reorganization_eV": 0.045684994447863204,
+        "reorganization_high_cm": 225.75500498203726,
+        "reorganization_low_cm": 142.71932815106908,
+        "sigma_low_0K_cm": 198.46759409817017,
+        "sigma_low_cm": 266.6727546947946,
+        "sigma_low_eV": 0.033063207453386326,
+        "n_modes": 189,
+        "n_high": 120,
+        "n_low": 64,
+        "n_excluded": 5,
+        "strong_low_modes": [],
+        "freq_scale": 1.0,
+        "modes_grouped": [
+          {
+            "omega_cm": 922.4389775890636,
+            "omega_eV": 0.1143678562664659,
+            "S": 0.024015253106289765,
+            "n_modes": 33
+          },
+          {
+            "omega_cm": 1256.8520246721819,
+            "omega_eV": 0.15582978950176246,
+            "S": 0.062439129876834,
+            "n_modes": 23
+          },
+          {
+            "omega_cm": 1543.644314112604,
+            "omega_eV": 0.19138750132220206,
+            "S": 0.08105860366388334,
+            "n_modes": 64
+          }
+        ]
+      }
+    }
+  ],
+  "adiabatic_eV": [
+    2.8117578369676433,
+    3.0735595677885112,
+    3.251752961318048,
+    3.2552960445323436,
+    3.5424877403646495,
+    3.560315782742051,
+    3.707688514385675,
+    3.728591708504088
+  ],
+  "pairs": [
+    {
+      "pair": [
+        "frag1",
+        "frag2"
+      ],
+      "J_total_cm-1": 1048.9189209109343,
+      "tdc_fft_cm-1": 928.3009251250547,
+      "tresp_cm-1": 1139.6926786163633,
+      "mulliken_cm-1": 785.2644150839856,
+      "point_dipole_cm-1": 558.9485709340997,
+      "extended_dipole_cm-1": 519.6278957299777
+    }
+  ]
+}

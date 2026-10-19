@@ -221,6 +221,15 @@ arbitrary per state but consistent with each other. A `diabatic.json` in an olde
 format is rewritten the next time the pipeline runs (only the diabatize stage reruns;
 the whole-system TDDFT is reused).
 
+The format is defined in `eecc.formats` (standard library only): `DIABATIC_FORMAT`
+is the version this EECC writes (5; the module lists what each version added) and
+`check_diabatic(d)` lists what a parsed file of format 3 to 5 lacks. The pipeline
+checks every file before writing it, and a program that reads `diabatic.json` can
+call the same check. `eecc paths config.yaml` prints, as JSON, where `eecc run`
+puts each stage's output for that config, including the path of `diabatic.json`,
+whether it exists, and whether it is current for this config (`diabatize_done`;
+a file from earlier settings stays on disk until the stage reruns).
+
 On one 128-core node (see [Hardware](#hardware)) the BODIPY dimer (1244 basis
 functions) took 11 h, the trimer (1864) 20 h and the tetramer (2484) 47 h.
 
@@ -814,6 +823,7 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 src/eecc/
 ├── __init__.py           # Version and top-level exports
 ├── constants.py          # Physical constants (Bohr, Hartree, eV, etc.)
+├── formats.py            # diabatic.json: format version and check (read by other programs)
 ├── cli.py                # Unified argparse CLI
 │
 ├── io/                   # File I/O
@@ -871,6 +881,10 @@ src/eecc/
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
+
+Without the `qm` extras the pipeline tests (`tests/test_qm.py`) are skipped; with
+`pip install -e ".[dev,qm]"` they run on small molecules (a few minutes). GitHub
+Actions runs both on every pull request (`.github/workflows/tests.yml`).
 
 ## Citation
 

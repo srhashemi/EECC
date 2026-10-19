@@ -14,6 +14,7 @@ import shutil
 import time
 from typing import List, Optional, Tuple
 
+from eecc.formats import DIABATIC_FORMAT
 from eecc.qm.config import PipelineConfig
 from eecc.qm.structure import (
     Fragment, Structure, build_fragments, load_fragment_files, read_xyz, save_xyz,
@@ -31,10 +32,9 @@ DEPENDS = {
     "fragments": ("opt",), "td": ("fragments",), "transition": ("td",), "couplings": ("transition",),
     "system": ("opt",), "diabatize": ("system", "td", "vibronic"), "vibronic": ("fragments",),
 }
-# Output format of the diabatize stage; raising it reruns older results (2: diabatic transition dipoles;
-# 3: format_version, units, conventions, state types, fragment centres and axes; 4: fragments[].vibronic;
-# 5: fragments[].vibronic.modes_grouped).
-DIABATIZE_FORMAT = "5"
+# Output format of the diabatize stage (eecc.formats.DIABATIC_FORMAT, with its history); raising it reruns
+# older results.
+DIABATIZE_FORMAT = str(DIABATIC_FORMAT)
 PER_FRAGMENT = ("td", "transition", "vibronic")
 
 
