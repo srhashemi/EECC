@@ -1,0 +1,38 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    # the coupling methods, cube and charge I/O, and the diabatic.json format (no quantum-chemistry packages)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install ".[dev,viz]" pyyaml
+      - name: Test
+        run: python -m pytest -q tests
+
+  qm:
+    # the automated pipeline (eecc run) on small molecules with PySCF
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install ".[dev,viz,qm]"
+      - name: Test
+        run: python -m pytest -q tests

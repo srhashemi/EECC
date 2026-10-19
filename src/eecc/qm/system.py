@@ -203,6 +203,10 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
               "H_eV": res.H_eV.tolist(), "completeness": res.completeness.tolist(),
               "transition_dipoles_au": mu.tolist(), "oscillator_strengths": osc.tolist(),
               "fragments": fragments, "adiabatic_eV": data["energies_eV"].tolist(), "pairs": pairs}
+    from eecc.formats import check_diabatic
+    problems = check_diabatic(json.loads(json.dumps(result)))  # as a reader will see it
+    if problems:
+        raise RuntimeError("diabatic.json would not match its format: " + "; ".join(problems))
     with open(os.path.join(workdir, "diabatic.json"), "w") as f:
         json.dump(result, f, indent=2)
 

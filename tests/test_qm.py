@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("pyscf")
 pytest.importorskip("yaml")
 
+from eecc.formats import check_diabatic
 from eecc.qm.config import config_from_dict, load_config
 from eecc.qm.structure import (
     Structure, bonds, build_fragments, connected_components, read_xyz, save_xyz,
@@ -744,6 +745,7 @@ def test_pipeline_with_system_stage(tmp_path):
     pipe = Pipeline(cfg, log=lambda *a: None)
     pipe.run()
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert check_diabatic(res) == []  # the file matches eecc.formats
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and min(res["completeness"]) > 0.9
     # documented exciton-model format: version, units, state types, fragment centres and axes
     from eecc.qm.pipeline import DIABATIZE_FORMAT
@@ -805,6 +807,7 @@ def test_pipeline_with_system_stage(tmp_path):
     os.remove(os.path.join(pipe.stage_dir("couplings"), ".done"))
     pipe.run_diabatize(force=True)
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert check_diabatic(res) == []  # the file matches eecc.formats
     txt = open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and "LE states only" in txt
     assert "tresp_cm-1" not in res["pairs"][0] and "couplings stage not finished" in txt
@@ -1111,6 +1114,7 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
         out = json.load(open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")))
         assert len(out["modes"]["freq_cm"]) == 12 and out["summary"]["n_modes"] == 12
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert check_diabatic(res) == []  # the file matches eecc.formats
     assert [set(f["vibronic"]) >= {"S_eff", "omega_eff_cm", "sigma_low_cm"} for f in res["fragments"]] == [True] * 2
     s1, s2 = (f["vibronic"] for f in res["fragments"])
     assert s1["S_eff"] == pytest.approx(s2["S_eff"], rel=1e-4)  # identical monomers
@@ -1122,6 +1126,7 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     assert not pipe.is_done("vibronic", "frag1") and not pipe.is_done("diabatize")
     pipe.run()
     res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    assert check_diabatic(res) == []  # the file matches eecc.formats
     assert res["fragments"][0]["vibronic"]["cutoff_cm"] == 100.0
     assert pipe.is_done("diabatize")
     # so does the number of grouped modes
