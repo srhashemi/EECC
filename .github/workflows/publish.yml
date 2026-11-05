@@ -1,0 +1,49 @@
+name: publish
+
+# Publishing a GitHub release (tag vX.Y.Z) uploads that version to PyPI.
+# PyPI trusts this workflow directly (trusted publishing): no password or token is stored.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build and check
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: The release tag matches the package version
+        run: |
+          python -m pip install dist/*.whl
+          version="$(python -c 'import eecc; print(eecc.__version__)')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::release tag $GITHUB_REF_NAME does not match the package version $version"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/eecc/
+    permissions:
+      id-token: write  # for trusted publishing; only this job gets it
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
