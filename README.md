@@ -256,41 +256,57 @@ With `vibronic.enabled: true` (or `eecc init --vibronic`) the optional **vibroni
 stage gives each fragment the Huang–Rhys factors and frequencies of its `td.state`,
 the vibronic input of Frenkel–Holstein spectrum models. It uses the displaced
 harmonic oscillator model with the vertical-gradient method: at the fragment
-geometry it computes the ground-state Hessian (normal modes, frequencies ω_k) and
+geometry it computes the ground-state Hessian (normal modes, frequencies $\omega_k$) and
 the gradient of the excitation energy, with the `td` functional, basis and method.
 The functional and basis set are your choice (`td.xc`, `td.basis`, or `eecc init
 --functional ... --basis ...`). The Huang–Rhys factors depend strongly on the
 functional and no single one fits every dye (see
 [Validation](https://github.com/srhashemi/EECC#vibronic-parameters-against-experiment)), so check it against one
 measured spectrum of the dye or a close relative.
-Projected onto mass-weighted mode k (component g_k), the gradient gives the
-dimensionless displacement and Huang–Rhys factor (atomic units)
+Projected onto mass-weighted mode $k$ (component $g_k$), the gradient gives the
+dimensionless displacement $d_k$, the Huang–Rhys factor $S_k$ and the reorganization
+energy $\lambda$ (atomic units):
 
-d_k = −g_k / ω_k^(3/2),  S_k = d_k² / 2,  reorganization energy λ = Σ S_k ω_k.
+```math
+d_k = -\frac{g_k}{\omega_k^{3/2}}, \qquad S_k = \frac{d_k^2}{2}, \qquad \lambda = \sum_k S_k\,\omega_k
+```
 
 The gradient of the excitation energy (excited minus ground state) is used rather
 than that of the excited state alone, so the fragment, cut from the optimized
 aggregate and not exactly at its own minimum, gets no spurious ground-state force,
 and the parameters belong to the geometry of the couplings. Modes below
-`vibronic.min_frequency` (and imaginary ones) get no S, as S_k grows as 1/ω³.
+`vibronic.min_frequency` (and imaginary ones) get no S, as $S_k$ grows as $1/\omega_k^3$.
 
 A one-mode Holstein model needs one vibration, so the modes are also summarized:
 
-- modes at or above `vibronic.cutoff` (default 800 cm⁻¹; for π-conjugated dyes
-  mostly C=C/C–N ring stretches at 1200–1600 cm⁻¹, too closely spaced to resolve)
-  form one effective mode: S_eff = Σ S_k, ω_eff = Σ S_k ω_k / Σ S_k;
-- the same modes are also grouped into at most `vibronic.groups` (default 3)
-  effective modes by frequency (`modes_grouped`: `omega_cm`, `omega_eV`, `S`,
-  `n_modes`, counting the modes with S > 0), for a Holstein model with several
-  modes. Each group keeps Σ S_k and Σ S_k ω_k of its modes (ω scaled by
-  `freq_scale`), so the total S and Σ S ω are those of the effective mode. The groups are the split into adjacent frequency bands with
-  the least S-weighted spread Σ S_k (ω_k − ω_g)², found exactly by dynamic
-  programming; all `vibronic.groups` are used whenever possible. Every group carries at least 5 % of S_eff, so a weak band such
-  as the C–H stretches joins a neighbour instead of taking a group (the BODIPY
-  monomer below: S 0.031 at 930, 0.061 at 1258 and 0.070 at 1546 cm⁻¹);
-- modes below it broaden the bands instead: Gaussian σ² = Σ S_k ω_k² coth(ω_k / 2kT).
+**Effective mode.** The modes at or above `vibronic.cutoff` (default 800 cm⁻¹; for
+π-conjugated dyes mostly C=C/C–N ring stretches at 1200–1600 cm⁻¹, too closely spaced
+to resolve) form one effective mode:
 
-`<workdir>/08_vibronic/<fragment>/vibronic.json` lists every mode (ω_k, S_k, d_k)
+```math
+S_\mathrm{eff} = \sum_k S_k, \qquad \omega_\mathrm{eff} = \frac{\sum_k S_k\,\omega_k}{\sum_k S_k}
+```
+
+**Grouped modes.** The same modes are also grouped into at most `vibronic.groups`
+(default 3) effective modes by frequency (`modes_grouped`: `omega_cm`, `omega_eV`, `S`,
+`n_modes`, counting the modes with S > 0), for a Holstein model with several modes.
+Each group keeps $\sum S_k$ and $\sum S_k \omega_k$ of its modes ($\omega$ scaled by
+`freq_scale`), so the total $S$ and $\sum S \omega$ are those of the effective mode.
+The groups are the split into adjacent frequency bands with the least S-weighted spread
+$\sum_g \sum_{k \in g} S_k (\omega_k - \omega_g)^2$ ($\omega_g$: the effective frequency
+of group $g$), found exactly by dynamic programming; all `vibronic.groups` are used
+whenever possible. Every group carries at least 5 % of $S_\mathrm{eff}$, so a weak band
+such as the C–H stretches joins a neighbour instead of taking a group (the BODIPY
+monomer below: S 0.031 at 930, 0.061 at 1258 and 0.070 at 1546 cm⁻¹).
+
+**Low-frequency modes.** The modes below the cutoff broaden the bands instead, as a
+Gaussian of width $\sigma$:
+
+```math
+\sigma^2 = \sum_k S_k\,\omega_k^2 \coth\frac{\omega_k}{2 k_\mathrm{B} T}
+```
+
+`<workdir>/08_vibronic/<fragment>/vibronic.json` lists every mode ($\omega_k$, $S_k$, $d_k$)
 and the summary; `vibronic.txt` lists the summary and the most displaced modes and
 warns about low-frequency modes with S > 1 (large-amplitude distortions such as
 torsions, where one effective mode is too crude). With `system.enabled` the summary
@@ -299,14 +315,14 @@ not hold up `diabatic.json`: it is written without that fragment's parameters, a
 next run adds them once the vibronic stage is done. Changing only the
 summary settings (`cutoff`, `groups`, `temperature`, `freq_scale`, `min_frequency`) reuses the
 Hessian and gradient stored in `vibronic.npz`. `freq_scale` scales the frequencies
-only; S and λ (= Σ g_k² / 2ω_k², the relaxation energy of the excited state) do not
-change with it.
+only; $S_k$ and $\lambda = \sum_k g_k^2 / 2\omega_k^2$ (the relaxation energy of the excited
+state) do not change with it.
 
 The Hessian has no dispersion correction, whatever `td.xc` is (as in the `td` stage;
 PySCF's wB97X-D lacks its dispersion term). It would cancel in the excitation-energy
 gradient, which is the same in both states, but not in the Hessian: soft
 low-frequency modes (torsions) may come out slightly off, and with them their S and
-the width σ.
+the width $\sigma$.
 
 The vibronic TDDFT solves fewer roots than the `td` stage (`vibronic.nstates`, default
 `td.state` + 2). If its excitation energy lies more than 0.02 eV from the `td` stage's, the log
@@ -474,13 +490,13 @@ they are:
 | ≥ 400 cm⁻¹ | 0.99 | 1.35 |
 
 The high-frequency factors reproduce the measured vibronic structure without
-scaling (S_eff 0.16 at ω_eff 1321 cm⁻¹; the absorption shoulder at 2.6 eV). The
+scaling ($S_\mathrm{eff}$ 0.16 at $\omega_\mathrm{eff}$ 1321 cm⁻¹; the absorption shoulder at 2.6 eV). The
 low-frequency modes are overestimated by the harmonic vertical-gradient model: those
 below 400 cm⁻¹ give a Gaussian width of 487 cm⁻¹ at 295 K, while the fitted width,
 which also holds the solvent broadening, is 230–290 cm⁻¹. The largest part comes from
 two torsions of the meso aryl group (62 and 129 cm⁻¹, S 1.1 and 1.7, flagged in
 `vibronic.txt`; 348 cm⁻¹ on their own). When `vibronic.txt` warns about strong
-low-frequency modes, use S_eff and ω_eff with a width from experiment, or take
+low-frequency modes, use $S_\mathrm{eff}$ and $\omega_\mathrm{eff}$ with a width from experiment, or take
 `sigma_low` as an upper bound.
 
 Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6 and 10
@@ -495,8 +511,8 @@ the summary values within 0.4 % and single weakly displaced modes (S > 0.01) wit
 Quaterrylene (parent C40H20, 60 atoms, geometry optimized with ωB97X-D/6-31G(d))
 against the absorption of 1,1'-dihexylquaterrylene in toluene (Cravcenco et al.,
 J. Am. Chem. Soc. 143 (2021) 19232; measured S ≈ 0.5 at about 1400 cm⁻¹).
-ωB97X-D gives the right progression shape and spacing (ω_eff 1455 cm⁻¹) but twice
-the vibronic strength (S_eff 1.00); the best scale is 0.52 whichever modes are
+ωB97X-D gives the right progression shape and spacing ($\omega_\mathrm{eff}$ 1455 cm⁻¹) but twice
+the vibronic strength ($S_\mathrm{eff}$ 1.00); the best scale is 0.52 whichever modes are
 taken. Cost on a full node: 10.5 h (Hessian 6.9 h with the integrals recomputed),
 peak 189 GB from the TDDFT with the integrals in memory, on a 256 GB node.
 
@@ -505,7 +521,7 @@ state and the faster settings, Davidson 1e-4 and `response_grid: [75, 302]`; abo
 7.5 h each) show that the better functional depends on the dye. Best scale on all S
 (1 = computed S fit as they are) and rms of the unscaled fit:
 
-| Dye, spectrum, modes | ωB97X-D: S_eff, scale, rms | B3LYP: S_eff, scale, rms |
+| Dye, spectrum, modes | ωB97X-D: $S_\mathrm{eff}$, scale, rms | B3LYP: $S_\mathrm{eff}$, scale, rms |
 |---|---|---|
 | BODIPY absorption, ≥ 150 cm⁻¹ | 0.16, 0.76, 0.060 | 0.84, 0.34, 0.185 |
 | BODIPY absorption, ≥ 400 cm⁻¹ | 0.16, 0.99, 0.031 | 0.84, 0.35, 0.182 |
