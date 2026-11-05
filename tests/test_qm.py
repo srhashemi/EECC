@@ -1245,7 +1245,7 @@ def test_failed_vibronic_stage_does_not_block_diabatize(tmp_path, monkeypatch):
         pipe.run("vibronic")
 
     # diabatize without the vibronic results: a warning, not an error
-    del pipe.run_diabatize
+    monkeypatch.delattr(pipe, "run_diabatize")  # back to the real method (pytest >= 9.2 safe)
     monkeypatch.setattr(pipe, "is_done", lambda st, frag=None: st in ("system", "td"))
     d = pipe.stage_dir("diabatize")
 

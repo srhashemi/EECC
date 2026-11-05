@@ -6,6 +6,8 @@ import argparse
 import os
 import sys
 
+from eecc import __version__
+
 
 def _cmd_intramolecular(args):
     from eecc.workflows.intramolecular import run_intramolecular
@@ -71,7 +73,15 @@ def _cmd_check_charge(args):
     print(f"Total charge = {Q:.3e} e")
 
 
+def _need_matplotlib(command):
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError as exc:
+        sys.exit(f"eecc {command} needs matplotlib: pip install 'eecc[viz]' ({exc})")
+
+
 def _cmd_view(args):
+    _need_matplotlib("view")
     from eecc.viz.viewer import main as viewer_main
     # Re-pack sys.argv for viewer's own argparse
     argv = [args.cubeA]
@@ -89,6 +99,7 @@ def _cmd_view(args):
 
 
 def _cmd_plot_density(args):
+    _need_matplotlib("plot-density")
     from eecc.io.cube import read_cube
     from eecc.viz.cube_plot import plot_two_density_slices, print_grid_summary
 
@@ -238,12 +249,12 @@ def main() -> None:
         prog="eecc",
         description="Exciton-Exciton Coupling Calculator",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # --- intramolecular ---
     p = sub.add_parser("intramolecular", help="Intramolecular coupling from charge file")
-    p.add_argument("charges_file", help="Charge file name inside inputs/")
+    p.add_argument("charges_file", help="Charge file (path, or name inside inputs/)")
     p.add_argument("--frags", nargs="+", required=True,
                    help='Fragment atom indices (1-based), e.g. --frags "1-56" "57-112,129-140"')
     p.add_argument("--scale", type=float, default=1.0, help="Charge scale factor")
@@ -252,7 +263,7 @@ def main() -> None:
 
     # --- intermolecular ---
     p = sub.add_parser("intermolecular", help="Intermolecular coupling from monomer file")
-    p.add_argument("monomer_file", help="Monomer file name inside inputs/")
+    p.add_argument("monomer_file", help="Monomer charge file (path, or name inside inputs/)")
     p.add_argument("--placement", nargs="+", required=True,
                    help='Monomer placements: "posX,posY,posZ axisX,axisY,axisZ angleDeg"')
     p.add_argument("--dielectric", type=float, default=1.0, help="Dielectric constant")
@@ -260,8 +271,8 @@ def main() -> None:
 
     # --- tdc-two-monomers ---
     p = sub.add_parser("tdc-two-monomers", help="TDC coupling from two monomer cubes")
-    p.add_argument("cubeA", help="Monomer A cube filename inside inputs/")
-    p.add_argument("cubeB", help="Monomer B cube filename inside inputs/")
+    p.add_argument("cubeA", help="Monomer A cube file (path, or name inside inputs/)")
+    p.add_argument("cubeB", help="Monomer B cube file (path, or name inside inputs/)")
     p.add_argument("--boundary", choices=["free", "periodic"], default="free",
                    help="FFT boundary: free (isolated; matches the direct sum, default) or periodic "
                         "(the published workflow; ~1 %% off for close neighbours, tens of %% for distant pairs)")
@@ -273,7 +284,7 @@ def main() -> None:
 
     # --- tdc-one-dimer ---
     p = sub.add_parser("tdc-one-dimer", help="TDC coupling from one dimer cube")
-    p.add_argument("dimer_cube", help="Dimer cube filename inside inputs/")
+    p.add_argument("dimer_cube", help="Dimer cube file (path, or name inside inputs/)")
     p.add_argument("--fragA", type=str, required=True, help="Atom indices for fragment A")
     p.add_argument("--fragB", type=str, required=True, help="Atom indices for fragment B")
     p.add_argument("--boundary", choices=["free", "periodic"], default="free",
@@ -299,7 +310,7 @@ def main() -> None:
     p.set_defaults(func=_cmd_check_charge)
 
     # --- view ---
-    p = sub.add_parser("view", help="Visualize molecules from cube files")
+    p = sub.add_parser("view", help="Visualize molecules from cube files (needs eecc[viz])")
     p.add_argument("cubeA", help="Monomer A cube file")
     p.add_argument("--cubeB", help="Optional monomer B cube file")
     p.add_argument("--save", help="Save figure to PNG")
@@ -308,7 +319,7 @@ def main() -> None:
     p.set_defaults(func=_cmd_view)
 
     # --- plot-density ---
-    p = sub.add_parser("plot-density", help="Plot density slices from two cubes")
+    p = sub.add_parser("plot-density", help="Plot density slices from two cubes (needs eecc[viz])")
     p.add_argument("cubeA", help="Monomer A cube file")
     p.add_argument("cubeB", help="Monomer B cube file")
     p.add_argument("--plane", choices=["x", "y", "z"], default="z", help="Slice plane")

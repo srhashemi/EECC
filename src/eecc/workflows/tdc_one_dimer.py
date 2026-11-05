@@ -17,6 +17,7 @@ from eecc.coupling.tdc_fft import (
     tdc_coupling_fft_simple,
 )
 from eecc.coupling.dipole import point_dipole_coupling
+from eecc.workflows import find_input
 from eecc.geometry.fragments import (
     parse_indices,
     split_cube_by_nearest_atom,
@@ -45,12 +46,13 @@ def run_one_dimer_tdc(
     dimer_name: str, fragA: list, fragB: list,
     dielectric: float = 1.0, pad_factor: int | None = None, boundary: str = "free",
 ) -> None:
-    """Run TDC coupling from a single dimer cube file."""
-    inputs_dir = "inputs"
+    """Run TDC coupling from a single dimer cube file.
+
+    The cube is ``inputs/<name>`` when that exists, else the path as given; results go to ``outputs/``.
+    """
+    cube_path = find_input(dimer_name)
     outputs_dir = "outputs"
     os.makedirs(outputs_dir, exist_ok=True)
-
-    cube_path = os.path.join(inputs_dir, dimer_name)
     cube = read_cube(cube_path, units="bohr")
     if boundary == "free":
         try:  # check before the slow nearest-atom split

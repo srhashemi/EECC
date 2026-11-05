@@ -14,6 +14,7 @@ from eecc.coupling.tdc_fft import (
     FreeGridTooLarge, boundary_label, dipole_models, tdc_coupling_fft, transition_dipole_from_cube,
 )
 from eecc.coupling.tdc_bruteforce import tdc_coupling_bruteforce
+from eecc.workflows import find_input
 
 
 def _ensure_dir(path: str) -> None:
@@ -29,13 +30,14 @@ def run_tdc(
     threshold: float = 0.0005,
     boundary: str = "free",
 ) -> None:
-    """Run all TDC coupling methods between two monomer cubes."""
-    inputs_dir = "inputs"
+    """Run all TDC coupling methods between two monomer cubes.
+
+    Each cube is ``inputs/<name>`` when that exists, else the path as given; results go to ``outputs/``.
+    """
+    cubeA_path = find_input(monomerA_name)
+    cubeB_path = find_input(monomerB_name)
     outputs_dir = "outputs"
     _ensure_dir(outputs_dir)
-
-    cubeA_path = os.path.join(inputs_dir, monomerA_name)
-    cubeB_path = os.path.join(inputs_dir, monomerB_name)
 
     print("\n=== Transition Density Cube (TDC) Coupling ===")
     print(f"  cubeA: {cubeA_path}")
