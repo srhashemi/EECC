@@ -10,7 +10,7 @@ EECC computes excitonic couplings between chromophores, within one molecule
   *total* couplings and charge-transfer states.
 - **From existing transition densities or charges** (for example Gaussian cube
   files and Multiwfn charges), with the commands under
-  [Working from cube or charge files](#working-from-cube-or-charge-files).
+  [Working from cube or charge files](https://github.com/srhashemi/EECC#working-from-cube-or-charge-files).
 
 Coupling methods:
 
@@ -22,48 +22,51 @@ Coupling methods:
 ## In short
 
 ```bash
-pip install -e ".[qm]"
+pip install "eecc[qm]"
 eecc init pair.xyz           # writes config.yaml: every option, its default and a comment
 eecc run config.yaml         # runs here; add --slurm on a cluster
 ```
 
 The couplings of every fragment pair are in `work/05_couplings/couplings.txt`.
 Separate molecules are split automatically; for one covalent molecule, give
-the atoms of each chromophore with `--ranges` (see [Getting started](#getting-started)).
+the atoms of each chromophore with `--ranges` (see [Getting started](https://github.com/srhashemi/EECC#getting-started)).
 
-Contents: [Installation](#installation) ·
-[Getting started](#getting-started) ·
-[Automated pipeline](#automated-pipeline-from-geometry-to-couplings) ·
-[Validation](#validation) ·
-[Working from cube or charge files](#working-from-cube-or-charge-files) ·
-[Python API](#python-api) ·
-[Configuration reference](#configuration-reference) ·
-[Citation](#citation)
+Contents: [Installation](https://github.com/srhashemi/EECC#installation) ·
+[Getting started](https://github.com/srhashemi/EECC#getting-started) ·
+[Automated pipeline](https://github.com/srhashemi/EECC#automated-pipeline-from-geometry-to-couplings) ·
+[Validation](https://github.com/srhashemi/EECC#validation) ·
+[Working from cube or charge files](https://github.com/srhashemi/EECC#working-from-cube-or-charge-files) ·
+[Python API](https://github.com/srhashemi/EECC#python-api) ·
+[Configuration reference](https://github.com/srhashemi/EECC#configuration-reference) ·
+[Citation](https://github.com/srhashemi/EECC#citation)
 
 ## Installation
 
-Requires Python 3.9+ with NumPy and SciPy.
+Requires Python 3.10+ with NumPy and SciPy.
 
 ```bash
-pip install -e .
-```
-
-For visualization tools (matplotlib):
-
-```bash
-pip install -e ".[viz]"
+pip install eecc
 ```
 
 For the automated TD-DFT pipeline (`eecc run`; PySCF, pyscf-dispersion, geomeTRIC, PyYAML):
 
 ```bash
-pip install -e ".[qm]"
+pip install "eecc[qm]"
 ```
 
-For development (pytest):
+For visualization tools (matplotlib):
 
 ```bash
-pip install -e ".[dev]"
+pip install "eecc[viz]"
+```
+
+The examples and the published example data (`examples/`, `inputs/`) are in the
+repository, not in the package. For them, or for development (pytest):
+
+```bash
+git clone https://github.com/srhashemi/EECC.git
+cd EECC
+pip install -e ".[dev,qm]"
 ```
 
 | Package    | Version  | Required for     |
@@ -74,9 +77,12 @@ pip install -e ".[dev]"
 | pytest     | >= 7.0   | Testing          |
 | pyscf, pyscf-dispersion, geomeTRIC, PyYAML | see `pyproject.toml` | `eecc run` |
 
+Changes between versions are listed in [CHANGELOG.md](https://github.com/srhashemi/EECC/blob/main/CHANGELOG.md).
+
 ## Getting started
 
-The BODIPY dimer of the validation, from its geometry to the couplings:
+The BODIPY dimer of the validation, from its geometry to the couplings (in a
+clone of the repository):
 
 ```bash
 cd examples/qm/bodipy_dimer
@@ -106,8 +112,8 @@ configuration before anything runs: misspelled keys (with a suggestion), values
 of the wrong type (such as an unquoted `12:00:00`, which YAML reads as seconds),
 and functionals or basis sets that PySCF does not know or that lack an element
 of the molecule. All options are listed under
-[Configuration reference](#configuration-reference); a configuration for the
-BODIPY dimer is in [`examples/qm/bodipy_dimer/config.yaml`](examples/qm/bodipy_dimer/config.yaml).
+[Configuration reference](https://github.com/srhashemi/EECC#configuration-reference); a configuration for the
+BODIPY dimer is in [`examples/qm/bodipy_dimer/config.yaml`](https://github.com/srhashemi/EECC/blob/main/examples/qm/bodipy_dimer/config.yaml).
 
 ## Automated pipeline: from geometry to couplings
 
@@ -213,7 +219,7 @@ meant to be read by other programs, for example for spectra:
 | `completeness` | how well the computed whole-system states reproduce each diabatic state (0–1) |
 | `fragments` | per fragment: `name`, `natoms_own`, `center_ang` (centre of mass, Å), `principal_axes` (unit vectors, by increasing moment of inertia; for a planar molecule the last is the plane normal) and `moments_amu_ang2`, from the fragment's own atoms without caps; two equal moments (a symmetric top) leave the two axes free to rotate in their plane |
 | `adiabatic_eV`, `pairs` | whole-system excitation energies; per fragment pair, the total and the Coulomb couplings (cm⁻¹) |
-| `fragments[].vibronic` | with `vibronic.enabled`: the fragment's Holstein parameters (`S_eff`, `omega_eff_cm`, `sigma_low_cm`, reorganization energies, `modes_grouped`; see [Vibronic parameters](#vibronic-parameters)) |
+| `fragments[].vibronic` | with `vibronic.enabled`: the fragment's Holstein parameters (`S_eff`, `omega_eff_cm`, `sigma_low_cm`, reorganization energies, `modes_grouped`; see [Vibronic parameters](https://github.com/srhashemi/EECC#vibronic-parameters)) |
 
 All positions and vectors are in the frame of `system.xyz`. The phase of each
 diabatic state (LE or CT) is arbitrary, so signs of couplings and dipoles are
@@ -230,11 +236,11 @@ puts each stage's output for that config, including the path of `diabatic.json`,
 whether it exists, and whether it is current for this config (`diabatize_done`;
 a file from earlier settings stays on disk until the stage reruns).
 
-On one 128-core node (see [Hardware](#hardware)) the BODIPY dimer (1244 basis
+On one 128-core node (see [Hardware](https://github.com/srhashemi/EECC#hardware)) the BODIPY dimer (1244 basis
 functions) took 11 h, the trimer (1864) 20 h and the tetramer (2484) 47 h.
 
 The results for the BODIPY dimer, trimer and tetramer and a PDI dimer are under
-[Whole-system results](#whole-system-results).
+[Whole-system results](https://github.com/srhashemi/EECC#whole-system-results).
 
 **How many states?** Below a completeness of 0.8, `diabatic.txt` warns: increase
 `system.nstates` (default: four per fragment). Above 0.8 the result can still be
@@ -255,7 +261,7 @@ the gradient of the excitation energy, with the `td` functional, basis and metho
 The functional and basis set are your choice (`td.xc`, `td.basis`, or `eecc init
 --functional ... --basis ...`). The Huang–Rhys factors depend strongly on the
 functional and no single one fits every dye (see
-[Validation](#vibronic-parameters-against-experiment)), so check it against one
+[Validation](https://github.com/srhashemi/EECC#vibronic-parameters-against-experiment)), so check it against one
 measured spectrum of the dye or a close relative.
 Projected onto mass-weighted mode k (component g_k), the gradient gives the
 dimensionless displacement and Huang–Rhys factor (atomic units)
@@ -307,7 +313,7 @@ The vibronic TDDFT solves fewer roots than the `td` stage (`vibronic.nstates`, d
 warns that it may be another state; raise `vibronic.nstates` then.
 
 The Hessian dominates the cost (for a 65-atom BODIPY fragment 7.5 h of 10.9 h on a
-full node, see [Validation](#vibronic-parameters-against-experiment)); with
+full node, see [Validation](https://github.com/srhashemi/EECC#vibronic-parameters-against-experiment)); with
 `--slurm` the vibronic stage runs as its own array job in parallel with the fragment
 TDDFT, one whole node per fragment by default (`slurm.vibronic_cpus`,
 `slurm.vibronic_mem`, `slurm.vibronic_partition`, `slurm.time_vibronic`). `vibronic.response_grid: [75, 302]` halves the
@@ -450,7 +456,7 @@ from theirs:
 With the same 60 states both projections give the same Hamiltonian (couplings up to
 87 meV; S1–S1 24 meV, S1–CT 55–75 meV). One CT site energy still moves by 14 meV
 between 50 and 60 states, so for such high diabatic states the result depends on
-`system.nstates` (see [Whole-system TDDFT](#whole-system-tddft-and-the-exciton-hamiltonian)).
+`system.nstates` (see [Whole-system TDDFT](https://github.com/srhashemi/EECC#whole-system-tddft-and-the-exciton-hamiltonian)).
 
 ### Vibronic parameters against experiment
 
@@ -480,7 +486,7 @@ low-frequency modes, use S_eff and ω_eff with a width from experiment, or take
 Cost on a full node: 10.9 h (TDDFT and gradients 3.4 h with Davidson 1e-6 and 10
 roots, Hessian 7.5 h; the default `vibronic.nstates` now solves 3 roots). With the integrals in memory the job peaked at 307 GB, on a 512 GB node;
 with `vibronic.eri: auto` on 256 GB nodes the Hessian recomputes them but can still run
-out of memory (see [Memory](#vibronic-parameters)). The default
+out of memory (see [Memory](https://github.com/srhashemi/EECC#vibronic-parameters)). The default
 Davidson tolerance 1e-4 gives the same S (to 2e-4) and a 30 % faster TDDFT;
 `vibronic.response_grid: [75, 302]` halves the TDDFT and gradient time again, with
 the summary values within 0.4 % and single weakly displaced modes (S > 0.01) within
@@ -516,10 +522,10 @@ poor choice.
 ## Working from cube or charge files
 
 These subcommands work on transition densities and transition charges computed
-elsewhere, for example with Gaussian and Multiwfn. They look up input files
-inside `inputs/` and write results to `outputs/`, relative to the current
-directory, so run them from the repository root. The bundled BODIPY dimer files
-are described under [Example data](#example-data).
+elsewhere, for example with Gaussian and Multiwfn. Each input file is taken from
+`inputs/` when it is there (as in the repository: run from its root to use the
+bundled BODIPY dimer files, see [Example data](https://github.com/srhashemi/EECC#example-data)), otherwise as the
+path given. Results are written to `outputs/` in the current directory.
 
 ### TDC coupling from two monomer cube files
 
@@ -553,7 +559,7 @@ thresholds of 0.0005, 0.0002, 0.0001 and 0.00005 give 967.2, 974.9, 977.4 and
 
 Results with timing are printed and saved to `outputs/TDC_two_monomer_results.txt`.
 
-Example with the bundled BODIPY dimer fragment cubes (see [Example data](#example-data)):
+Example with the bundled BODIPY dimer fragment cubes (see [Example data](https://github.com/srhashemi/EECC#example-data)):
 
 ```bash
 eecc tdc-two-monomers BOPIDY_DIM-s-TD-WB97XD-631Gd-f1.cub BOPIDY_DIM-s-TD-WB97XD-631Gd-f2.cub --threshold 0.0005
@@ -593,7 +599,7 @@ Computes pairwise Coulomb (TrMulliken), point-dipole, and extended-dipole coupli
 between fragments defined by atom index ranges. Prints a comparison table and
 saves results to `outputs/intramolecular_<file>/results.txt`.
 Fragment indices are 1-based and support ranges, commas, and mixed notation
-(`charges.txt` below stands for any charge file in `inputs/`):
+(`charges.txt` below stands for any charge file):
 
 ```bash
 # Dimer — each fragment combines two discontinuous ranges
@@ -877,6 +883,8 @@ src/eecc/
 
 ## Testing
 
+In a clone of the repository:
+
 ```bash
 pip install -e ".[dev]"
 pytest tests/ -v
@@ -914,4 +922,4 @@ S. Rasoul Hashemi
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](https://github.com/srhashemi/EECC/blob/main/LICENSE).

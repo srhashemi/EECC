@@ -173,6 +173,8 @@ def test_two_monomer_workflow_reports_nan_when_free_grid_too_large(monkeypatch, 
     monkeypatch.setattr(tdc_two_monomers, "read_cube", lambda path, units: cubes[os.path.basename(path)])
     monkeypatch.setattr(tdc_fft, "FREE_FFT_MAX_POINTS", 10.0)
     monkeypatch.chdir(tmp_path)
+    for name in cubes:  # the files must exist (find_input); their content comes from the stub above
+        (tmp_path / name).write_text("")
     tdc_two_monomers.run_tdc("a.cub", "b.cub", threshold=0.0)
     out = capsys.readouterr().out
     assert "not computed (nan)" in out and "periodic" not in out

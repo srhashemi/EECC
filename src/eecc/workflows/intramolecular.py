@@ -10,6 +10,7 @@ import numpy as np
 from eecc.constants import EV_TO_CM
 from eecc.io.charges import read_atoms, read_atoms_scaled
 from eecc.geometry.fragments import parse_indices
+from eecc.workflows import find_input
 from eecc.coupling.coulomb import compute_J
 from eecc.coupling.dipole import (
     compute_transition_dipole,
@@ -98,7 +99,7 @@ def run_intramolecular(
     Parameters
     ----------
     filename : str
-        Charge file name (looked up inside inputs/).
+        Charge file: ``inputs/<name>`` when that exists, else the path as given.
     fragments_str : list of str
         Fragment atom indices as strings, e.g. ["1-56", "57-112,129-140"].
     scale_factor : float
@@ -106,7 +107,7 @@ def run_intramolecular(
     dielectric : float
         Relative dielectric constant.
     """
-    filepath = os.path.join("inputs", filename)
+    filepath = find_input(filename)
 
     if scale_factor == 1.0:
         atoms = read_atoms(filepath)

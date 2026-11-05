@@ -11,6 +11,7 @@ from eecc.geometry.rotation import rotate_around_point, align_to_z_axis
 from eecc.geometry.transform import center_of_mass
 from eecc.io.charges import read_atoms
 from eecc.io.xyz import write_xyz
+from eecc.workflows import find_input
 from eecc.coupling.coulomb import compute_J
 from eecc.coupling.dipole import (
     compute_transition_dipole,
@@ -112,13 +113,13 @@ def run_intermolecular(
     Parameters
     ----------
     input_file : str
-        Monomer charge file name (looked up inside inputs/).
+        Monomer charge file: ``inputs/<name>`` when that exists, else the path as given.
     placements_str : list of str
         Placement strings, each ``"posX,posY,posZ axisX,axisY,axisZ angleDeg"``.
     eps_r : float
         Relative dielectric constant.
     """
-    input_path = os.path.join("inputs", input_file)
+    input_path = find_input(input_file)
 
     # --- Read monomer ---
     atoms_list = read_atoms(input_path)
