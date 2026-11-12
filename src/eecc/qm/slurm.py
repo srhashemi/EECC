@@ -89,7 +89,7 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     if prep_done:
         todo = [k for k, nm in enumerate(pipe.fragment_names(), 1) if not pipe.is_done("transition", nm)]
 
-    optimizing = pipe.cfg.opt.enabled and pipe.cfg.fragments.mode != "files"
+    optimizing = pipe.cfg.optimizes
     if optimizing:
         prep_res = (s.time_opt, s.opt_cpus or s.cpus, s.opt_mem or s.mem, s.opt_partition)
     else:
@@ -132,7 +132,7 @@ def submit(pipe: Pipeline, config_path: str, dry_run: bool = False) -> List[str]
     paths = {}
     for key, text in scripts.items():
         paths[key] = os.path.join(log_dir, f"{key}.sh")
-        with open(paths[key], "w") as f:
+        with open(paths[key], "w", encoding="utf-8", newline="\n") as f:  # bash: no CRLF, also from Windows
             f.write(text)
     if dry_run:
         return list(paths.values())

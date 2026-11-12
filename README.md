@@ -30,8 +30,10 @@ eecc run config.yaml         # runs here; add --slurm on a cluster
 The couplings of every fragment pair are in `work/05_couplings/couplings.txt`.
 Separate molecules are split automatically; for one covalent molecule, give
 the atoms of each chromophore with `--ranges` (see [Getting started](https://github.com/srhashemi/EECC#getting-started)).
+On Windows or macOS, see [Windows and macOS](https://github.com/srhashemi/EECC#windows-and-macos).
 
 Contents: [Installation](https://github.com/srhashemi/EECC#installation) ·
+[Windows and macOS](https://github.com/srhashemi/EECC#windows-and-macos) ·
 [Getting started](https://github.com/srhashemi/EECC#getting-started) ·
 [Automated pipeline](https://github.com/srhashemi/EECC#automated-pipeline-from-geometry-to-couplings) ·
 [Validation](https://github.com/srhashemi/EECC#validation) ·
@@ -48,7 +50,7 @@ Requires Python 3.10+ with NumPy and SciPy.
 pip install eecc
 ```
 
-For the automated TD-DFT pipeline (`eecc run`; PySCF, pyscf-dispersion, geomeTRIC, PyYAML):
+For the automated TD-DFT pipeline (`eecc run`; PySCF, pyscf-dispersion where pip has it, geomeTRIC, PyYAML):
 
 ```bash
 pip install "eecc[qm]"
@@ -78,6 +80,82 @@ pip install -e ".[dev,qm]"
 | pyscf, pyscf-dispersion, geomeTRIC, PyYAML | see `pyproject.toml` | `eecc run` |
 
 Changes between versions are listed in [CHANGELOG.md](https://github.com/srhashemi/EECC/blob/main/CHANGELOG.md).
+
+### Windows and macOS
+
+The couplings from cube and charge files work the same on every system. For the
+automated pipeline, the default geometry optimization adds the D3(BJ) dispersion
+correction from the package pyscf-dispersion, which pip has for Linux and Intel Macs only:
+
+|                                               | Linux | Windows                                      | macOS                                   |
+|-----------------------------------------------|-------|----------------------------------------------|-----------------------------------------|
+| Cube and charge files (`pip install eecc`)    | yes   | yes                                          | yes                                     |
+| Automated pipeline (`pip install "eecc[qm]"`) | yes   | in WSL (recommended), or natively without D3 | yes (Intel); without D3 (Apple silicon) |
+
+**Windows, cube and charge files.** Install Python from
+[python.org](https://www.python.org/downloads/windows/) and tick *Add python.exe to PATH*
+in the installer. Then, in PowerShell or the Command Prompt:
+
+```
+py -m pip install eecc
+py -m eecc --help
+```
+
+`py -m eecc` is the same as the `eecc` command, and also works when Windows answers
+*'eecc' is not recognized* (pip's script folder is not on PATH). Alternatively,
+[uv](https://docs.astral.sh/uv/) installs Python and EECC in one step and puts `eecc`
+on PATH:
+
+```
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv tool install --python 3.12 eecc
+```
+
+Open a new terminal after installing uv; if `eecc` is still not found, run
+`uv tool update-shell` and open another one.
+
+**Windows, the automated pipeline in WSL (recommended).** WSL runs Linux (Ubuntu) inside
+Windows, so EECC runs there as on Linux, including the D3(BJ) optimization. Once, in
+PowerShell opened as administrator:
+
+```
+wsl --install
+```
+
+Restart Windows, open *Ubuntu* from the Start menu, choose a user name and password,
+then:
+
+```bash
+sudo apt update && sudo apt install -y python3-venv
+python3 -m venv ~/eecc-env
+source ~/eecc-env/bin/activate     # again in every new Ubuntu window
+pip install "eecc[qm]"
+```
+
+Work in the Linux home folder (`cd ~`), not under `/mnt/c/...`: the Windows drives are
+much slower from WSL. `explorer.exe .` opens the current folder in the Windows Explorer,
+to copy files in and out.
+
+**Windows natively, and Apple silicon: the pipeline without D3.** There, `pip install "eecc[qm]"`
+installs PySCF (Windows builds since PySCF 2.15) but not pyscf-dispersion. Everything
+runs except the dispersion correction of the optimization, and `eecc run` stops before
+anything starts if the configuration asks for it. Then either
+
+- set `opt.disp: null` in `config.yaml`: optimization without dispersion correction
+  (the geometry differs from one optimized with D3(BJ), as in the validation), or
+- skip the optimization (`eecc init --no-opt`, or `opt.enabled: false`): the geometry is
+  used as given.
+
+For Apple silicon, conda-forge has pyscf-dispersion, and EECC uses it when it is installed:
+in a conda environment, `conda install -c conda-forge pyscf pyscf-dispersion`, then
+`pip install "eecc[qm]"`. Native Windows is the newest of these setups: for results
+to compare with the validation, use WSL.
+
+**Commands in PowerShell and the Command Prompt.** The examples in this README are
+written for bash (Linux, macOS, WSL). Natively on Windows, put a command that is split
+over several lines with `\` on one line, keep the double quotes (`"eecc[qm]"`,
+`"57-112,121-128"`), and use `type` instead of `cat` in the Command Prompt. EECC accepts
+paths with `/` or `\`.
 
 ## Getting started
 
@@ -766,7 +844,7 @@ Every option of `config.yaml`, with its default. Only `geometry` (or
 | `opt.xc` | `b3lyp` | functional |
 | `opt.basis` | `def2-svp` | basis set |
 | `opt.cart` | `null` | Cartesian d functions; null: as Gaussian (Cartesian for 6-31G-type bases) |
-| `opt.disp` | `d3bj` | dispersion correction (d3bj, d4, ...); null: none |
+| `opt.disp` | `d3bj` | dispersion correction (d3bj, d4, ...; needs pyscf-dispersion); null: none |
 | `opt.grid` | `[99, 590]` | DFT grid [radial, angular] |
 | `opt.density_fit` | `true` | density fitting (faster, negligible error for geometries) |
 | `opt.conv_tol` | `1.0e-09` | SCF convergence (Eh) |
@@ -908,7 +986,8 @@ pytest tests/ -v
 
 Without the `qm` extras the pipeline tests (`tests/test_qm.py`) are skipped; with
 `pip install -e ".[dev,qm]"` they run on small molecules (a few minutes). GitHub
-Actions runs both on every pull request (`.github/workflows/tests.yml`).
+Actions runs both on every pull request (`.github/workflows/tests.yml`), on Linux,
+Windows and macOS.
 
 ## Citation
 

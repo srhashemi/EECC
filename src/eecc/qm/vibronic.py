@@ -258,9 +258,9 @@ def run_vibronic(structure: Structure, cfg, workdir: str, name: str = "fragment"
                   "S": [None if not v else float(s) for s, v in zip(res["S"], res["valid"])],
                   "d": [None if not v else float(s) for s, v in zip(res["d"], res["valid"])]},
     }
-    with open(os.path.join(workdir, "vibronic.json"), "w") as f:
+    with open(os.path.join(workdir, "vibronic.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2)
-    with open(os.path.join(workdir, "vibronic.txt"), "w") as f:
+    with open(os.path.join(workdir, "vibronic.txt"), "w", encoding="utf-8") as f:
         f.write(format_modes(res, summary) + "\n")
     return out
 

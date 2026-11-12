@@ -65,7 +65,7 @@ def treat_cap_charges(atoms: list, caps: List[Tuple[int, int]], mode: str) -> li
 def load_fragment(transition_dir: str, td_dir: str, name: str,
                   caps: Optional[List[Tuple[int, int]]] = None,
                   cap_mode: str = "keep") -> FragmentData:
-    with open(os.path.join(td_dir, "td.json")) as f:
+    with open(os.path.join(td_dir, "td.json"), encoding="utf-8") as f:
         td = json.load(f)["selected"]
     caps = caps or []
 
@@ -149,7 +149,7 @@ def run_couplings(fragments: List[FragmentData], ccfg, out_dir: str) -> Dict[str
         "pairs": pairs,
         "note": "Signs are arbitrary: the phase of each fragment's transition density is arbitrary.",
     }
-    with open(os.path.join(out_dir, "couplings.json"), "w") as f:
+    with open(os.path.join(out_dir, "couplings.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     with open(os.path.join(out_dir, "couplings.txt"), "w", encoding="utf-8") as f:
         f.write(format_report(result, methods))

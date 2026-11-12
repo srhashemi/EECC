@@ -77,7 +77,7 @@ def _need_matplotlib(command):
     try:
         import matplotlib  # noqa: F401
     except ImportError as exc:
-        sys.exit(f"eecc {command} needs matplotlib: pip install 'eecc[viz]' ({exc})")
+        sys.exit(f"eecc {command} needs matplotlib: pip install \"eecc[viz]\" ({exc})")
 
 
 def _cmd_view(args):
@@ -117,18 +117,21 @@ def _cmd_init(args):
 
     try:
         import yaml  # noqa: F401
-        from eecc.qm.config import check_names, config_from_dict
+        from eecc.qm.config import check_names, config_from_dict, dispersion_problem
         from eecc.qm.options import config_template
         from eecc.qm.structure import bonds, connected_components, read_xyz
     except ImportError as exc:
-        sys.exit(f"eecc init needs the optional QM dependencies: pip install 'eecc[qm]' ({exc})")
+        sys.exit(f"eecc init needs the optional QM dependencies: pip install \"eecc[qm]\" ({exc})")
 
     out = os.path.abspath(args.output)
     if os.path.exists(out) and not args.force:
         sys.exit(f"{args.output} exists; use --force to overwrite")
     base = os.path.dirname(out)
     def rel(p):  # relative to the config file when nearby, else absolute
-        r = os.path.relpath(os.path.abspath(p), base)
+        try:
+            r = os.path.relpath(os.path.abspath(p), base)
+        except ValueError:  # Windows: another drive
+            return os.path.abspath(p)
         return os.path.abspath(p) if r.startswith(os.pardir + os.sep + os.pardir) else r
     if not args.geometry and not args.files:
         sys.exit("give the geometry (XYZ file), or the fragment files with --files")
@@ -178,6 +181,8 @@ def _cmd_init(args):
         check_names(cfg)
     except ValueError as exc:
         sys.exit(f"error: {exc}")
+    if dispersion_problem(cfg):  # the file is still written; eecc run stops with the full message
+        notes["opt.disp"] = "pyscf-dispersion is not installed: set null, or see the README (Windows, macOS)"
     if no_ranges:
         cfg.fragments.ranges = []
     with open(out, "w", encoding="utf-8") as f:
@@ -189,10 +194,10 @@ def _cmd_init(args):
 
 def _cmd_run(args):
     try:
-        from eecc.qm.config import check_names, load_config
+        from eecc.qm.config import check_names, dispersion_problem, load_config
         from eecc.qm.pipeline import Pipeline
     except ImportError as exc:
-        sys.exit(f"eecc run needs the optional QM dependencies: pip install 'eecc[qm]' ({exc})")
+        sys.exit(f"eecc run needs the optional QM dependencies: pip install \"eecc[qm]\" ({exc})")
 
     try:
         cfg = load_config(args.config)
@@ -200,6 +205,12 @@ def _cmd_run(args):
     except ValueError as exc:
         sys.exit(f"error in {args.config}: {exc}")
     pipe = Pipeline(cfg)
+    # before anything runs, if this run will optimize (here or in the Slurm jobs) and cannot
+    optimizes = (args.slurm or args.stage in ("all", "opt")) and not args.dry_run and not args.restamp \
+        and (args.force or not pipe.is_done("opt"))
+    problem = dispersion_problem(cfg) if optimizes else None
+    if problem:
+        sys.exit(f"error in {args.config}: {problem}")
     if args.restamp:
         marked = pipe.restamp()
         print("Marked as up to date: " + (", ".join(marked) if marked else "nothing"))
@@ -227,7 +238,7 @@ def _cmd_paths(args):
         from eecc.qm.config import load_config
         from eecc.qm.pipeline import STAGES, Pipeline
     except ImportError as exc:
-        sys.exit(f"eecc paths needs PyYAML: pip install 'eecc[qm]' ({exc})")
+        sys.exit(f"eecc paths needs PyYAML: pip install \"eecc[qm]\" ({exc})")
     try:
         cfg = load_config(args.config)
     except (OSError, ValueError) as exc:
@@ -243,8 +254,25 @@ def _cmd_paths(args):
     print(json.dumps(out, indent=2))
 
 
+def _utf8_output() -> None:
+    """Write output to files and pipes as UTF-8; a terminal shows '?' for what it cannot.
+
+    On Windows, Python before 3.15 writes redirected output in the local code page (e.g.
+    cp1252), which has no Greek letters such as the Delta in the cube comparisons.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError, OSError):  # not a text stream that can be reconfigured
+            pass
+
+
 def main() -> None:
     """Entry point for the ``eecc`` command."""
+    _utf8_output()
     parser = argparse.ArgumentParser(
         prog="eecc",
         description="Exciton-Exciton Coupling Calculator",

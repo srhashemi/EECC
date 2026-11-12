@@ -103,11 +103,14 @@ class Pipeline:
 
     def is_done(self, stage: str, fragment: Optional[str] = None) -> bool:
         marker = os.path.join(self.stage_dir(stage, fragment), ".done")
-        return os.path.exists(marker) and open(marker).read().strip() == self.expected_hash(stage)
+        if not os.path.exists(marker):
+            return False
+        with open(marker, encoding="utf-8") as f:
+            return f.read().strip() == self.expected_hash(stage)
 
     def _mark_done(self, stage: str, fragment: Optional[str] = None) -> None:
         self._invalidate_downstream(stage, fragment)
-        with open(os.path.join(self.stage_dir(stage, fragment), ".done"), "w") as f:
+        with open(os.path.join(self.stage_dir(stage, fragment), ".done"), "w", encoding="utf-8") as f:
             f.write(self.expected_hash(stage) + "\n")
 
     def _invalidate_downstream(self, stage: str, fragment: Optional[str] = None) -> None:
@@ -141,7 +144,7 @@ class Pipeline:
         path = os.path.join(self.stage_dir("fragments"), "fragments.json")
         if not os.path.exists(path):
             raise RuntimeError("fragments stage has not run yet")
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return [fr["name"] for fr in json.load(f)["fragments"]]
 
     def load_fragment_structure(self, name: str) -> Structure:
@@ -173,7 +176,11 @@ class Pipeline:
         structure = read_xyz(self.cfg.path(self.cfg.geometry))
         save_xyz(structure, os.path.join(d, "input.xyz"))
         if self.cfg.opt.enabled:
+            from eecc.qm.config import dispersion_problem
             from eecc.qm.ground import optimize_geometry
+            problem = dispersion_problem(self.cfg)
+            if problem:
+                raise RuntimeError(problem)
             self._prepare_trajectory(d, force)
             self.log(f"[opt] optimizing {len(structure)} atoms "
                      f"({self.cfg.opt.xc}-{self.cfg.opt.disp}/{self.cfg.opt.basis})")
@@ -187,11 +194,14 @@ class Pipeline:
         """Keep trajectory.xyz for resuming only if it belongs to the current input and settings."""
         traj, stamp = os.path.join(d, "trajectory.xyz"), os.path.join(d, "trajectory.hash")
         current = self.expected_hash("opt")
-        stale = force or not os.path.exists(stamp) or open(stamp).read().strip() != current
+        stale = force or not os.path.exists(stamp)
+        if not stale:
+            with open(stamp, encoding="utf-8") as f:
+                stale = f.read().strip() != current
         if stale and os.path.exists(traj):
             self.log("[opt] discarding trajectory.xyz from a different input or settings")
             os.remove(traj)
-        with open(stamp, "w") as f:
+        with open(stamp, "w", encoding="utf-8") as f:
             f.write(current + "\n")
 
     def run_fragments(self, force: bool = False) -> None:
@@ -218,7 +228,7 @@ class Pipeline:
                          "caps": [{"kept": a + 1, "removed": b + 1} for a, b in fr.caps],
                          "charge": cfg.fragment_charge(k)})
             self.log(f"[fragments] {fr.name}: {len(fr.structure)} atoms, {len(fr.caps)} cap(s)")
-        with open(os.path.join(d, "fragments.json"), "w") as f:
+        with open(os.path.join(d, "fragments.json"), "w", encoding="utf-8") as f:
             json.dump({"fragments": meta}, f, indent=2)
         self._mark_done("fragments")
 
@@ -227,14 +237,14 @@ class Pipeline:
 
         Caps are appended after the fragment's own atoms in the order recorded.
         """
-        with open(os.path.join(self.stage_dir("fragments"), "fragments.json")) as f:
+        with open(os.path.join(self.stage_dir("fragments"), "fragments.json"), encoding="utf-8") as f:
             fr = next(x for x in json.load(f)["fragments"] if x["name"] == name)
         own = fr["parent_atoms_1based"]
         pos = {p: i for i, p in enumerate(own)}
         return [(len(own) + c, pos[cap["kept"]]) for c, cap in enumerate(fr["caps"])]
 
     def _fragment_charge(self, name: str) -> int:
-        with open(os.path.join(self.stage_dir("fragments"), "fragments.json")) as f:
+        with open(os.path.join(self.stage_dir("fragments"), "fragments.json"), encoding="utf-8") as f:
             for fr in json.load(f)["fragments"]:
                 if fr["name"] == name:
                     return int(fr["charge"])
@@ -302,9 +312,9 @@ class Pipeline:
         if not self.is_done("td", fragment):
             return
         try:
-            with open(os.path.join(self.stage_dir("td", fragment), "td.json")) as f:
+            with open(os.path.join(self.stage_dir("td", fragment), "td.json"), encoding="utf-8") as f:
                 e_td = json.load(f)["excitation_energies_eV"][self.cfg.td.state - 1]
-            with open(os.path.join(self.stage_dir("vibronic", fragment), "vibronic.json")) as f:
+            with open(os.path.join(self.stage_dir("vibronic", fragment), "vibronic.json"), encoding="utf-8") as f:
                 e_vib = json.load(f)["excitation_energy_eV"]
         except (OSError, ValueError, KeyError, IndexError):
             return
@@ -385,7 +395,7 @@ class Pipeline:
         ok = os.path.isdir(d) and all(os.path.exists(os.path.join(d, f)) for f in files)
         if ok and stage == "diabatize":  # a result in an older output format is not current
             try:
-                with open(os.path.join(d, "diabatic.json")) as f:
+                with open(os.path.join(d, "diabatic.json"), encoding="utf-8") as f:
                     ok = json.load(f).get("format_version") == int(DIABATIZE_FORMAT)
             except (OSError, ValueError):
                 ok = False
@@ -423,7 +433,7 @@ class Pipeline:
     def run(self, stage: str = "all", fragment: Optional[int] = None, force: bool = False) -> None:
         """Run one stage (optionally for one 1-based fragment index) or everything."""
         os.makedirs(self.root, exist_ok=True)
-        with open(os.path.join(self.root, "config.resolved.json"), "w") as f:
+        with open(os.path.join(self.root, "config.resolved.json"), "w", encoding="utf-8") as f:
             json.dump(self.cfg.to_dict(), f, indent=2)
         todo = RUN_ORDER if stage == "all" else (stage,)
         vib_error = None

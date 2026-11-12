@@ -101,7 +101,7 @@ def run_excited_states(
             "mu_D": float(np.linalg.norm(tdm[k]) * AU_TO_DEBYE),
         },
     }
-    with open(os.path.join(workdir, "td.json"), "w") as f:
+    with open(os.path.join(workdir, "td.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     return summary
 

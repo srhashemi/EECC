@@ -15,7 +15,7 @@ def write_xyz(
 ) -> None:
     """Write an XYZ-format file from atom labels and coordinates (Å)."""
     N = len(atoms)
-    with open(output_file, 'w') as f:
+    with open(output_file, 'w', encoding="utf-8") as f:
         f.write(f"{N}\n")
         f.write(f"{comment}\n")
         for atom, (x, y, z) in zip(atoms, coords):

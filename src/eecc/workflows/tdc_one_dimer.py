@@ -111,7 +111,7 @@ def run_one_dimer_tdc(
     tdc = tdc_coupling_fft_simple(cubeA, cubeB, dielectric=dielectric, pad_factor=pad_factor, boundary=boundary)
 
     out_path = os.path.join(outputs_dir, "TDC_from_one_dimer.txt")
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(f"# dielectric = {dielectric}\n")
         f.write(f"# {boundary_label(boundary, pad_factor)}\n")
         f.write("J_eV  J_cm^-1\n")

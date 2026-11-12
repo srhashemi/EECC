@@ -1,5 +1,6 @@
 """Tests for the automated QM pipeline (eecc.qm). Skipped without PySCF."""
 
+import importlib.util
 import json
 import os
 
@@ -8,6 +9,10 @@ import pytest
 
 pytest.importorskip("pyscf")
 pytest.importorskip("yaml")
+
+# D3/D4 in the optimization; pip has pyscf-dispersion for Linux and Intel macOS only
+HAS_DISPERSION = importlib.util.find_spec("pyscf.dispersion") is not None
+needs_dispersion = pytest.mark.skipif(not HAS_DISPERSION, reason="pyscf-dispersion is not installed")
 
 from eecc.formats import check_diabatic
 from eecc.qm.config import config_from_dict, load_config
@@ -69,7 +74,7 @@ def test_config_defaults_and_unknown_key(tmp_path):
 
 def test_config_paths_relative_to_file(tmp_path):
     p = tmp_path / "cfg.yaml"
-    p.write_text("geometry: mol.xyz\nfragments:\n  mode: auto\n")
+    p.write_text("geometry: mol.xyz\nfragments:\n  mode: auto\n", encoding="utf-8")
     cfg = load_config(str(p))
     assert cfg.path(cfg.geometry) == str(tmp_path / "mol.xyz")
     assert cfg.section_hash("td") == load_config(str(p)).section_hash("td")
@@ -131,6 +136,67 @@ def test_options_are_documented_and_template_roundtrips(tmp_path):
         "README reference is out of date: python -m eecc.qm.options README.md"
 
 
+def test_missing_dispersion_package(tmp_path, monkeypatch, capsys):
+    """Without pyscf-dispersion (Windows, Apple silicon), a run that optimizes with opt.disp stops first.
+
+    'eecc init' still writes the file, with a note at opt.disp; commands that do not optimize run.
+    """
+    import sys
+    from eecc.cli import main
+    from eecc.qm.config import dispersion_problem
+    from eecc.qm.pipeline import Pipeline
+
+    save_xyz(_stacked_dimer(), str(tmp_path / "pair.xyz"))
+    base = {"geometry": str(tmp_path / "pair.xyz"), "workdir": str(tmp_path / "lib"),
+            "fragments": {"mode": "auto"}, "td": {"basis": "sto-3g"}}
+    if HAS_DISPERSION:
+        assert dispersion_problem(config_from_dict(base)) is None
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: None if name == "pyscf.dispersion" else real(name, *a))
+    assert "opt.disp 'd3bj' needs the package pyscf-dispersion" in dispersion_problem(config_from_dict(base))
+    files = {"geometry": "", "fragments": {"mode": "files", "files": ["a.xyz", "b.xyz"]}}  # never optimized
+    for over in ({"opt": {"disp": None}}, {"opt": {"enabled": False}}, files):
+        assert dispersion_problem(config_from_dict({**base, **over})) is None
+    with pytest.raises(RuntimeError, match="needs the package pyscf-dispersion"):  # used as a library
+        Pipeline(config_from_dict(base), log=lambda *a: None).run_opt()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["eecc", "init", "pair.xyz", "--basis", "sto-3g"])
+    main()
+    assert "pyscf-dispersion is not installed" in open("config.yaml", encoding="utf-8").read()
+    assert "opt.disp: pyscf-dispersion is not installed" in capsys.readouterr().out
+
+    def run(*argv):
+        monkeypatch.setattr(sys, "argv", ["eecc", "run", "config.yaml", *argv])
+        main()
+
+    with pytest.raises(SystemExit, match="needs the package pyscf-dispersion.*opt.disp: null"):
+        run()
+    assert not os.path.exists("work")  # nothing ran
+    run("--restamp")  # does not optimize: not stopped
+    assert "Marked as up to date" in capsys.readouterr().out
+
+
+def test_cli_init_geometry_on_another_drive(tmp_path, monkeypatch):
+    """Windows: no relative path between drives; the geometry is then written as an absolute path."""
+    import sys
+    from eecc.cli import main
+
+    save_xyz(_stacked_dimer(), str(tmp_path / "pair.xyz"))
+    monkeypatch.chdir(tmp_path)
+
+    def other_drive(*args, **kwargs):
+        raise ValueError("path is on mount 'D:', start on mount 'C:'")
+
+    monkeypatch.setattr(os.path, "relpath", other_drive)
+    monkeypatch.setattr(sys, "argv", ["eecc", "init", "pair.xyz", "--basis", "sto-3g", "--no-opt"])
+    main()
+    monkeypatch.undo()
+    assert load_config(str(tmp_path / "config.yaml")).geometry == str(tmp_path / "pair.xyz")
+
+
 def test_cli_init(tmp_path, monkeypatch, capsys):
     import sys
     from eecc.cli import main
@@ -151,7 +217,7 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
         init("pair.xyz")
     # one covalent molecule without ranges: written, with ranges marked as required
     init("mono.xyz", "-o", "mono.yaml")
-    text = open(tmp_path / "mono.yaml").read()
+    text = open(tmp_path / "mono.yaml", encoding="utf-8").read()
     assert "REQUIRED" in text and "mode: ranges" in text
     init("mono.xyz", "-o", "mono2.yaml", "--ranges", "1-3", "4-6", "--method", "tda")
     cfg = load_config(str(tmp_path / "mono2.yaml"))
@@ -159,7 +225,7 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit, match="unknown functional"):
         init("pair.xyz", "-o", "bad.yaml", "--functional", "b3lpy")
     assert not os.path.exists(tmp_path / "bad.yaml")
-    (tmp_path / "broken.xyz").write_text("not an xyz file\n")
+    (tmp_path / "broken.xyz").write_text("not an xyz file\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="cannot read broken.xyz"):
         init("broken.xyz", "-o", "bad.yaml")
 
@@ -167,6 +233,14 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
 # ============================================================
 # === Structures and fragments ===============================
 # ============================================================
+
+def test_xyz_with_byte_order_mark(tmp_path):
+    """Notepad's 'UTF-8 with BOM' puts a byte-order mark before the atom count."""
+    path = tmp_path / "e.xyz"
+    save_xyz(ETHYLENE, str(path))
+    path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+    assert read_xyz(str(path)).symbols == ETHYLENE.symbols
+
 
 def test_xyz_roundtrip(tmp_path):
     path = tmp_path / "e.xyz"
@@ -259,7 +333,7 @@ def test_pipeline_non_covalent_dimer(tmp_path):
     pipe = Pipeline(cfg, log=lambda *a: None)
     pipe.run()
 
-    res = json.load(open(os.path.join(pipe.stage_dir("couplings"), "couplings.json")))
+    res = json.load(open(os.path.join(pipe.stage_dir("couplings"), "couplings.json"), encoding="utf-8"))
     assert len(res["fragments"]) == 2 and len(res["pairs"]) == 1
     J = res["pairs"][0]["J_cm-1"]
     assert abs(res["pairs"][0]["R_Ang"] - 4.0) < 1e-6
@@ -272,6 +346,7 @@ def test_pipeline_non_covalent_dimer(tmp_path):
     assert all(pipe.is_done("td", n) for n in pipe.fragment_names())
 
 
+@needs_dispersion
 def test_pipeline_covalent_with_optimization(tmp_path):
     from eecc.qm.pipeline import Pipeline
 
@@ -287,7 +362,7 @@ def test_pipeline_covalent_with_optimization(tmp_path):
     pipe.run()
     opt = read_xyz(os.path.join(pipe.stage_dir("opt"), "optimized.xyz"))
     assert len(opt) == 10 and os.path.exists(os.path.join(pipe.stage_dir("opt"), "trajectory.xyz"))
-    frags = json.load(open(os.path.join(pipe.stage_dir("fragments"), "fragments.json")))["fragments"]
+    frags = json.load(open(os.path.join(pipe.stage_dir("fragments"), "fragments.json"), encoding="utf-8"))["fragments"]
     assert [f["natoms"] for f in frags] == [6, 6]
     assert os.path.exists(os.path.join(pipe.stage_dir("couplings"), "couplings.txt"))
 
@@ -306,11 +381,12 @@ def test_slurm_dry_run(tmp_path):
     cfg = _small_config(tmp_path, geo, slurm={"account": "proj-1", "setup": ["module load x"]})
     scripts = submit(Pipeline(cfg), str(tmp_path / "cfg.yaml"), dry_run=True)
     assert len(scripts) == 3
-    frag = open(scripts[1]).read()
+    frag = open(scripts[1], encoding="utf-8").read()
     assert "#SBATCH --array=1-2" in frag and "#SBATCH -A proj-1" in frag
     assert "--stage td --fragment $SLURM_ARRAY_TASK_ID" in frag and "module load x" in frag
-    prep = open(scripts[0]).read()
+    prep = open(scripts[0], encoding="utf-8").read()
     assert "#SBATCH -c 1" in prep  # no optimization: the prep job only splits fragments
+    assert not any(b"\r" in open(p, "rb").read() for p in scripts)  # bash scripts, also from Windows
     assert "#SBATCH -c 32" in frag and "#SBATCH --mem=28G" in frag
 
 
@@ -323,7 +399,7 @@ def test_slurm_opt_job_overrides(tmp_path):
     cfg = _small_config(tmp_path, geo, opt={"enabled": True},
                         slurm={"account": "p", "partition": "shared", "opt_partition": "main", "opt_cpus": 128,
                                "opt_mem": "0"})
-    prep, frag, _ = (open(p).read() for p in submit(Pipeline(cfg), str(tmp_path / "c.yaml"),
+    prep, frag, _ = (open(p, encoding="utf-8").read() for p in submit(Pipeline(cfg), str(tmp_path / "c.yaml"),
                                                     dry_run=True))
     assert "#SBATCH -p main" in prep and "#SBATCH -c 128" in prep and "#SBATCH --mem=0" in prep
     assert "#SBATCH -p shared" in frag and "#SBATCH -c 32" in frag
@@ -379,7 +455,7 @@ def test_restamp_and_resubmit_skips_finished_stages(tmp_path):
     # simulate markers written by an older version
     for root, _, files in os.walk(pipe.root):
         if ".done" in files:
-            open(os.path.join(root, ".done"), "w").write("stale\n")
+            open(os.path.join(root, ".done"), "w", encoding="utf-8").write("stale\n")
     assert not pipe.is_done("opt")
     assert pipe.restamp() == ["opt", "fragments", "td", "transition", "couplings"]
     assert pipe.is_done("couplings") and pipe.is_done("td", "frag2")
@@ -388,10 +464,10 @@ def test_restamp_and_resubmit_skips_finished_stages(tmp_path):
     assert [os.path.basename(s) for s in scripts] == ["analysis.sh"]
 
     # an unfinished fragment: only its array task is resubmitted
-    open(os.path.join(pipe.stage_dir("transition", "frag2"), ".done"), "w").write("stale\n")
+    open(os.path.join(pipe.stage_dir("transition", "frag2"), ".done"), "w", encoding="utf-8").write("stale\n")
     scripts = submit(pipe, str(tmp_path / "c.yaml"), dry_run=True)
     assert [os.path.basename(s) for s in scripts] == ["frag.sh", "analysis.sh"]
-    assert "#SBATCH --array=2\n" in open(scripts[0]).read()
+    assert "#SBATCH --array=2\n" in open(scripts[0], encoding="utf-8").read()
 
 
 def test_slurm_array_spec():
@@ -473,7 +549,7 @@ def test_rerun_invalidates_dependent_stages(tmp_path):
     for st in STAGES:
         for frag in (["frag1", "frag2"] if st in ("td", "transition") else [None]):
             os.makedirs(pipe.stage_dir(st, frag), exist_ok=True)
-            open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w").write(pipe.expected_hash(st) + "\n")
+            open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w", encoding="utf-8").write(pipe.expected_hash(st) + "\n")
     pipe._mark_done("td", "frag1")  # e.g. after --stage td --fragment 1 --force
     assert pipe.is_done("td", "frag1") and pipe.is_done("td", "frag2")
     assert not pipe.is_done("transition", "frag1") and pipe.is_done("transition", "frag2")
@@ -491,16 +567,16 @@ def test_optimization_restarts_only_from_matching_trajectory(tmp_path):
     d = pipe.stage_dir("opt")
     os.makedirs(d)
     traj = os.path.join(d, "trajectory.xyz")
-    open(traj, "w").write("frames of another run\n")
+    open(traj, "w", encoding="utf-8").write("frames of another run\n")
     pipe._prepare_trajectory(d, force=False)  # no stamp: unknown origin
     assert not os.path.exists(traj)
-    open(traj, "w").write("frames of this run\n")
+    open(traj, "w", encoding="utf-8").write("frames of this run\n")
     pipe._prepare_trajectory(d, force=False)  # stamp matches: resume
     assert os.path.exists(traj)
     save_xyz(_stacked_dimer(4.5), str(geo))  # new input geometry
     pipe._prepare_trajectory(d, force=False)
     assert not os.path.exists(traj)
-    open(traj, "w").write("frames\n")
+    open(traj, "w", encoding="utf-8").write("frames\n")
     pipe._prepare_trajectory(d, force=True)
     assert not os.path.exists(traj)
 
@@ -536,7 +612,7 @@ def test_slurm_scripts_tolerate_unset_variables_in_setup(tmp_path):
     save_xyz(_stacked_dimer(), str(geo))
     cfg = _small_config(tmp_path, geo, slurm={"account": "p", "setup": ["conda activate eecc"]})
     for path in submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True):
-        text = open(path).read()
+        text = open(path, encoding="utf-8").read()
         assert "set -eo pipefail" in text and "set -u" not in text and "-euo" not in text
 
 
@@ -560,10 +636,10 @@ def test_slurm_physical_cores_hint(tmp_path):
     geo = tmp_path / "dimer.xyz"
     save_xyz(_stacked_dimer(), str(geo))
     on = submit(Pipeline(_small_config(tmp_path, geo, slurm={"account": "p"})), str(tmp_path / "c.yaml"), dry_run=True)
-    assert all("#SBATCH --hint=nomultithread" in open(p).read() for p in on)
+    assert all("#SBATCH --hint=nomultithread" in open(p, encoding="utf-8").read() for p in on)
     cfg = _small_config(tmp_path, geo, slurm={"account": "p", "physical_cores": False})
     off = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
-    assert not any("nomultithread" in open(p).read() for p in off)
+    assert not any("nomultithread" in open(p, encoding="utf-8").read() for p in off)
 
 
 def test_diabatization_recovers_fragment_states_and_davydov_coupling(tmp_path):
@@ -589,7 +665,7 @@ def test_diabatization_recovers_fragment_states_and_davydov_coupling(tmp_path):
     x = np.array([xy[0] for xy in td.xy]); y = np.array([xy[1] for xy in td.xy])
 
     res = diabatize_from_pipeline(pipe, mol, mf.mo_coeff, mf.mo_occ, x, y, E, include_ct=False)
-    e_frag = json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json")))["selected"]["energy_eV"]
+    e_frag = json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json"), encoding="utf-8"))["selected"]["energy_eV"]
     assert np.all(res.completeness > 0.9)
     assert abs(res.H_eV[0, 0] - res.H_eV[1, 1]) < 1e-3  # symmetric dimer
     assert abs(res.H_eV[0, 0] - e_frag) < 0.05
@@ -662,7 +738,7 @@ def test_system_stage_dependencies_and_hashes(tmp_path):
         for st in STAGES:
             for frag in (["frag1", "frag2"] if st in PER_FRAGMENT else [None]):
                 os.makedirs(pipe.stage_dir(st, frag), exist_ok=True)
-                open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w").write(pipe.expected_hash(st) + "\n")
+                open(os.path.join(pipe.stage_dir(st, frag), ".done"), "w", encoding="utf-8").write(pipe.expected_hash(st) + "\n")
     stamp_all()
     pipe._mark_done("couplings")
     assert pipe.is_done("system") and pipe.is_done("diabatize")
@@ -706,9 +782,9 @@ def test_slurm_jobs_for_system_stage(tmp_path):
     cfg = _small_config(tmp_path, geo, system={"enabled": True}, slurm={"account": "p"})
     scripts = submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
     assert [os.path.basename(p) for p in scripts] == ["prep.sh", "frag.sh", "analysis.sh", "system.sh", "diabatize.sh"]
-    system = open(scripts[3]).read()
+    system = open(scripts[3], encoding="utf-8").read()
     assert "#SBATCH -p " not in system and "#SBATCH -c 128" in system and "--stage system" in system
-    assert "--stage diabatize" in open(scripts[4]).read()
+    assert "--stage diabatize" in open(scripts[4], encoding="utf-8").read()
     with pytest.raises(ValueError, match="system.enabled"):
         config_from_dict({"fragments": {"mode": "files", "files": ["a.xyz", "b.xyz"]}, "system": {"enabled": True}})
 
@@ -744,7 +820,7 @@ def test_pipeline_with_system_stage(tmp_path):
                         system={"enabled": True, "nstates": 6, "include_ct": False})
     pipe = Pipeline(cfg, log=lambda *a: None)
     pipe.run()
-    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json"), encoding="utf-8"))
     assert check_diabatic(res) == []  # the file matches eecc.formats
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and min(res["completeness"]) > 0.9
     # documented exciton-model format: version, units, state types, fragment centres and axes
@@ -757,28 +833,28 @@ def test_pipeline_with_system_stage(tmp_path):
     # diabatic transition dipoles: equal for the two sites of the symmetric dimer and close to the
     # fragment's (here a dark state, so an absolute tolerance)
     mu = np.linalg.norm(res["transition_dipoles_au"], axis=1)
-    mu_frag = np.linalg.norm(json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json")))["selected"]["mu_au"])
+    mu_frag = np.linalg.norm(json.load(open(os.path.join(pipe.stage_dir("td", "frag1"), "td.json"), encoding="utf-8"))["selected"]["mu_au"])
     assert abs(mu[0] - mu[1]) < 1e-3 * mu[0] + 1e-4 and abs(mu[0] - mu_frag) < 0.15 * mu_frag + 0.01
     assert len(res["oscillator_strengths"]) == 2 and "Transition dipoles of the diabatic states" in \
-        open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
+        open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt"), encoding="utf-8").read()
     pair = res["pairs"][0]
     assert {"J_total_cm-1", "tresp_cm-1", "tdc_direct_cm-1"} <= set(pair)
-    assert "Total coupling (this stage) vs Coulomb" in open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
+    assert "Total coupling (this stage) vs Coulomb" in open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt"), encoding="utf-8").read()
     assert pipe.is_done("system") and pipe.is_done("diabatize")
-    assert all(s["converged"] for s in json.load(open(os.path.join(pipe.stage_dir("system"), "system_td.json")))["states"])
+    assert all(s["converged"] for s in json.load(open(os.path.join(pipe.stage_dir("system"), "system_td.json"), encoding="utf-8"))["states"])
 
     # results of the previous output format (no diabatic dipoles; system_td.json without 'converged'):
     # not current anywhere (is_done, restamp), and rerun without errors
     import eecc.qm.pipeline as pipeline_module
     path = os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")
-    old = {k: v for k, v in json.load(open(path)).items()
+    old = {k: v for k, v in json.load(open(path, encoding="utf-8")).items()
            if k not in ("transition_dipoles_au", "oscillator_strengths", "format_version")}
-    json.dump(old, open(path, "w"))
+    json.dump(old, open(path, "w", encoding="utf-8"))
     spath = os.path.join(pipe.stage_dir("system"), "system_td.json")
-    sys_td = json.load(open(spath))
+    sys_td = json.load(open(spath, encoding="utf-8"))
     for st in sys_td["states"]:
         del st["converged"]
-    json.dump(sys_td, open(spath, "w"))
+    json.dump(sys_td, open(spath, "w", encoding="utf-8"))
     fmt = pipeline_module.DIABATIZE_FORMAT
     try:
         pipeline_module.DIABATIZE_FORMAT = "1"
@@ -788,7 +864,7 @@ def test_pipeline_with_system_stage(tmp_path):
     assert not pipe.is_done("diabatize") and not pipe._outputs_present("diabatize")
     assert "diabatize" not in pipe.restamp()
     pipe.run_diabatize()
-    assert "transition_dipoles_au" in json.load(open(path)) and pipe.is_done("diabatize")
+    assert "transition_dipoles_au" in json.load(open(path, encoding="utf-8")) and pipe.is_done("diabatize")
 
     # too few system states for LE + CT: fall back to LE only instead of failing after the system run
     from eecc.qm.diabatize import diabatize_from_pipeline
@@ -806,9 +882,9 @@ def test_pipeline_with_system_stage(tmp_path):
     # stale couplings (marker removed, file left behind) must not be listed as the Coulomb couplings
     os.remove(os.path.join(pipe.stage_dir("couplings"), ".done"))
     pipe.run_diabatize(force=True)
-    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json"), encoding="utf-8"))
     assert check_diabatic(res) == []  # the file matches eecc.formats
-    txt = open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt")).read()
+    txt = open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.txt"), encoding="utf-8").read()
     assert res["labels"] == ["LE(frag1)", "LE(frag2)"] and "LE states only" in txt
     assert "tresp_cm-1" not in res["pairs"][0] and "couplings stage not finished" in txt
 
@@ -1111,9 +1187,9 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     pipe.run()
     for name in ("frag1", "frag2"):
         assert pipe.is_done("vibronic", name)
-        out = json.load(open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")))
+        out = json.load(open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json"), encoding="utf-8"))
         assert len(out["modes"]["freq_cm"]) == 12 and out["summary"]["n_modes"] == 12
-    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json"), encoding="utf-8"))
     assert check_diabatic(res) == []  # the file matches eecc.formats
     assert [set(f["vibronic"]) >= {"S_eff", "omega_eff_cm", "sigma_low_cm"} for f in res["fragments"]] == [True] * 2
     s1, s2 = (f["vibronic"] for f in res["fragments"])
@@ -1125,7 +1201,7 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     pipe.cfg.vibronic.cutoff = 100.0
     assert not pipe.is_done("vibronic", "frag1") and not pipe.is_done("diabatize")
     pipe.run()
-    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))
+    res = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json"), encoding="utf-8"))
     assert check_diabatic(res) == []  # the file matches eecc.formats
     assert res["fragments"][0]["vibronic"]["cutoff_cm"] == 100.0
     assert pipe.is_done("diabatize")
@@ -1133,15 +1209,15 @@ def test_pipeline_with_vibronic_stage(tmp_path, monkeypatch):
     pipe.cfg.vibronic.groups = 2
     assert not pipe.is_done("vibronic", "frag1")
     pipe.run()
-    g = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))["fragments"][0]["vibronic"]
+    g = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json"), encoding="utf-8"))["fragments"][0]["vibronic"]
     assert 1 <= len(g["modes_grouped"]) <= 2 and sum(x["S"] for x in g["modes_grouped"]) == pytest.approx(g["S_eff"])
     # a vibronic.json from before grouped modes: the diabatization groups its modes
     vfile = os.path.join(pipe.stage_dir("vibronic", "frag1"), "vibronic.json")
-    vj = json.load(open(vfile))
+    vj = json.load(open(vfile, encoding="utf-8"))
     del vj["summary"]["modes_grouped"]
-    json.dump(vj, open(vfile, "w"))
+    json.dump(vj, open(vfile, "w", encoding="utf-8"))
     pipe.run_diabatize(force=True)
-    g2 = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json")))["fragments"][0]["vibronic"]
+    g2 = json.load(open(os.path.join(pipe.stage_dir("diabatize"), "diabatic.json"), encoding="utf-8"))["fragments"][0]["vibronic"]
     assert [(x["omega_cm"], x["S"], x["n_modes"]) for x in g2["modes_grouped"]] == \
         [(pytest.approx(x["omega_cm"]), pytest.approx(x["S"]), x["n_modes"]) for x in g["modes_grouped"]]
     assert pipe.restamp()[-2:] == ["vibronic", "diabatize"] and pipe.is_done("diabatize")
@@ -1174,7 +1250,7 @@ def test_slurm_jobs_for_vibronic_stage(tmp_path, monkeypatch):
                         slurm={"account": "p"})
     scripts = slurm.submit(Pipeline(cfg), str(tmp_path / "c.yaml"), dry_run=True)
     vib = next(p for p in scripts if p.endswith("vib.sh"))
-    text = open(vib).read()
+    text = open(vib, encoding="utf-8").read()
     assert "--array=1-2" in text and "--stage vibronic --fragment $SLURM_ARRAY_TASK_ID" in text
     assert "#SBATCH -t 24:00:00" in text and "#SBATCH -c 128" in text and "#SBATCH --mem=0" in text
     calls = []
@@ -1209,11 +1285,11 @@ def test_vibronic_state_check(tmp_path):
     for st, name, data in (("td", "td.json", {"excitation_energies_eV": [3.00, 3.20]}),
                            ("vibronic", "vibronic.json", {"excitation_energy_eV": 3.005})):
         os.makedirs(pipe.stage_dir(st, "frag1"), exist_ok=True)
-        json.dump(data, open(os.path.join(pipe.stage_dir(st, "frag1"), name), "w"))
+        json.dump(data, open(os.path.join(pipe.stage_dir(st, "frag1"), name), "w", encoding="utf-8"))
     pipe._check_vibronic_state("frag1")
     assert not logs
     json.dump({"excitation_energy_eV": 3.20}, open(os.path.join(pipe.stage_dir("vibronic", "frag1"),
-                                                                "vibronic.json"), "w"))
+                                                                "vibronic.json"), "w", encoding="utf-8"))
     pipe._check_vibronic_state("frag1")
     assert len(logs) == 1 and "a different state?" in logs[0]
 
@@ -1251,7 +1327,7 @@ def test_failed_vibronic_stage_does_not_block_diabatize(tmp_path, monkeypatch):
 
     def fake_diabatization(p, workdir):
         os.makedirs(workdir, exist_ok=True)
-        open(os.path.join(workdir, "diabatic.txt"), "w").write("H\n")
+        open(os.path.join(workdir, "diabatic.txt"), "w", encoding="utf-8").write("H\n")
     monkeypatch.setattr(system, "run_diabatization", fake_diabatization)
     pipe.run_diabatize()
     assert os.path.exists(os.path.join(d, ".done"))

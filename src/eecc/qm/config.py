@@ -210,6 +210,11 @@ class PipelineConfig:
     def workdir_path(self) -> str:
         return self.path(self.workdir)
 
+    @property
+    def optimizes(self) -> bool:
+        """Whether the opt stage optimizes the geometry (fragment files are used as given)."""
+        return self.opt.enabled and self.fragments.mode != "files"
+
     def fragment_charge(self, k: int) -> int:
         """Charge of fragment *k* (0-based)."""
         ch = self.fragments.charges
@@ -426,6 +431,27 @@ def validate(cfg: PipelineConfig) -> None:
         raise ValueError("transition.cube spacing and margin must be positive")
 
 
+def dispersion_problem(cfg: PipelineConfig) -> Optional[str]:
+    """Why the optimization's dispersion correction (opt.disp) cannot run here, or None.
+
+    PySCF computes D3/D4 with the package pyscf-dispersion, which pip has for Linux and
+    Intel macOS only, so ``pip install "eecc[qm]"`` leaves it out on Windows and Apple silicon.
+    """
+    if not (cfg.optimizes and cfg.opt.disp):
+        return None
+    import importlib.util
+
+    try:
+        if importlib.util.find_spec("pyscf.dispersion") is not None:
+            return None
+    except ImportError:  # PySCF itself is missing
+        pass
+    return (f"opt.disp '{cfg.opt.disp}' needs the package pyscf-dispersion, which is not installed "
+            "(pip has it for Linux and Intel Macs only: on Windows use WSL; for Apple silicon, "
+            "conda-forge has it). Or set opt.disp: null (optimization without dispersion correction) "
+            "or opt.enabled: false (the geometry as given)")
+
+
 def check_names(cfg: PipelineConfig) -> None:
     """Check functionals and basis sets with PySCF before anything runs.
 
@@ -440,7 +466,7 @@ def check_names(cfg: PipelineConfig) -> None:
 
     files = [cfg.geometry] if cfg.geometry else list(cfg.fragments.files)
     elements = sorted({s for p in files if os.path.exists(cfg.path(p)) for s in read_xyz(cfg.path(p)).symbols})
-    stages = [("td", cfg.td)] + ([("opt", cfg.opt)] if cfg.opt.enabled else [])
+    stages = [("td", cfg.td)] + ([("opt", cfg.opt)] if cfg.optimizes else [])
     problems = []
     for name, sec in stages:
         try:
@@ -485,6 +511,6 @@ def config_from_dict(data: Dict[str, Any], base_dir: str = ".") -> PipelineConfi
 def load_config(path: str) -> PipelineConfig:
     import yaml
 
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig") as f:  # -sig: also files saved with a byte-order mark
         data = yaml.safe_load(f) or {}
     return config_from_dict(data, base_dir=os.path.dirname(os.path.abspath(path)))

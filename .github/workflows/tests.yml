@@ -23,6 +23,23 @@ jobs:
       - name: Test
         run: python -m pytest -q tests
 
+  core-os:
+    # the same on Windows and macOS
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: python -m pip install ".[dev,viz]" pyyaml
+      - name: Test
+        run: python -m pytest -q tests
+
   package:
     # the sdist and wheel build, their metadata (README renders on PyPI), and the installed wheel
     runs-on: ubuntu-latest
@@ -58,3 +75,22 @@ jobs:
         run: python -m pip install ".[dev,viz,qm]"
       - name: Test
         run: python -m pytest -q tests
+
+  qm-os:
+    # the pipeline natively on Windows and macOS (Apple silicon): pip has no pyscf-dispersion there,
+    # so "eecc[qm]" installs without it and the tests of the D3 optimization are skipped
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install ".[dev,viz,qm]"
+      - name: Test
+        run: python -m pytest -q -rs tests
