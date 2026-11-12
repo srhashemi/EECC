@@ -47,7 +47,7 @@ HELP: Dict[str, str] = {
     "opt.xc": "functional",
     "opt.basis": "basis set",
     "opt.cart": "Cartesian d functions; null: as Gaussian (Cartesian for 6-31G-type bases)",
-    "opt.disp": "dispersion correction (d3bj, d4, ...); null: none",
+    "opt.disp": "dispersion correction (d3bj, d4, ...; needs pyscf-dispersion); null: none",
     "opt.grid": "DFT grid [radial, angular]",
     "opt.density_fit": "density fitting (faster, negligible error for geometries)",
     "opt.conv_tol": "SCF convergence (Eh)",

@@ -20,7 +20,7 @@ def atomic_symbol(Z: int) -> str:
 def read_atoms(filename: str) -> List[Tuple[str, float, float, float, float]]:
     """Read a charge file with columns: Element X Y Z Charge."""
     atoms: List[Tuple[str, float, float, float, float]] = []
-    with open(filename, "r") as f:
+    with open(filename, "r", encoding="utf-8-sig", errors="replace") as f:
         for line in f:
             parts = line.split()
             if len(parts) == 5:
@@ -36,7 +36,7 @@ def read_atoms_scaled(
 ) -> List[Tuple[str, float, float, float, float]]:
     """Read a charge file, dividing each charge by *scale_factor*."""
     atoms: List[Tuple[str, float, float, float, float]] = []
-    with open(filename, "r") as f:
+    with open(filename, "r", encoding="utf-8-sig", errors="replace") as f:
         for line in f:
             parts = line.split()
             if len(parts) == 5:
@@ -53,7 +53,7 @@ def write_charges_txt(
     verbose: bool = True,
 ) -> None:
     """Write charges in the format: Element  x(Å)  y(Å)  z(Å)  q(e)."""
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         for el, x, y, z, q in atoms_with_q:
             f.write(f"{el:>2s} {x:12.6f} {y:12.6f} {z:12.6f} {q:+14.8f}\n")
     if verbose:

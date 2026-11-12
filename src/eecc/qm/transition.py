@@ -196,6 +196,6 @@ def run_transition(td_dir: str, cfg, out_dir: str, name: str, charge: int = 0) -
         "mulliken": {**summary(atoms_bohr.T @ q_mull), "sum_q": float(q_mull.sum())},
         "tresp": {**summary(atoms_bohr.T @ q_tresp), "sum_q": float(q_tresp.sum()), **stats},
     }
-    with open(os.path.join(out_dir, f"{name}_transition.json"), "w") as f:
+    with open(os.path.join(out_dir, f"{name}_transition.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, indent=2)
     return info

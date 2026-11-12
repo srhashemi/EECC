@@ -15,7 +15,7 @@ DATA = Path(__file__).resolve().parent / "data"
 
 def real():
     """diabatic.json of the BODIPY dimer from 'eecc run' (format 5, LE + CT, vibronic stage)."""
-    return json.loads((DATA / "diabatic_bodipy_dimer.json").read_text())
+    return json.loads((DATA / "diabatic_bodipy_dimer.json").read_text(encoding="utf-8"))
 
 
 def test_real_file_passes():
@@ -77,7 +77,7 @@ def test_paths_command(tmp_path, capsys, monkeypatch):
     pytest.importorskip("yaml")
     from eecc.cli import main
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("geometry: x.xyz\nworkdir: out\nfragments:\n  ranges: ['1-3', '4-6']\n")
+    cfg.write_text("geometry: x.xyz\nworkdir: out\nfragments:\n  ranges: ['1-3', '4-6']\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["eecc", "paths", str(cfg)])
     main()
     out = json.loads(capsys.readouterr().out)

@@ -2,6 +2,34 @@
 
 All notable changes to EECC. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.0.1] - 2026-11-12
+
+Installation on Windows and macOS.
+
+### Fixed
+
+- `pip install "eecc[qm]"` failed on Windows and on Macs with Apple silicon: pyscf-dispersion (the
+  D3/D4 correction of the geometry optimization) has pip packages for Linux and Intel macOS only. It
+  is now required only there. Without it, a run that would optimize with `opt.disp` set stops
+  before anything runs and says what to do (WSL on Windows, conda-forge on Apple silicon,
+  `opt.disp: null`, or no optimization); `eecc init` notes it in the file. Runs that do not
+  optimize (fragment files, later stages, `--restamp`) are not affected.
+- Text files (`config.yaml`, JSON and text results, cube, charge and XYZ files) are read and written
+  as UTF-8 on every system; Windows used its local code page. Input files may start with a
+  byte-order mark (Notepad) and have titles in another code page.
+- Output redirected to a file or pipe is written as UTF-8: on Windows, characters such as Δ stopped
+  the program.
+- `eecc init` with the geometry on another Windows drive than the configuration file.
+- Slurm job scripts have Unix line endings on every system.
+- Install hints use double quotes (`pip install "eecc[qm]"`), which also work in the Windows
+  Command Prompt.
+
+### Added
+
+- `python -m eecc`, the same as `eecc`, for when pip's script folder is not on PATH.
+- README: installation on Windows (natively, with uv, and the pipeline in WSL) and macOS.
+- GitHub Actions: the core and pipeline tests also on Windows and macOS.
+
 ## [2.0.0] - 2026-11-05
 
 ### Added
@@ -73,5 +101,6 @@ First version: couplings from Gaussian cube files and transition charges (TDC vi
 TrESP fitting, transition Mulliken charges, point and extended dipoles), intra- and intermolecular
 workflows, and visualization tools.
 
+[2.0.1]: https://github.com/srhashemi/EECC/releases/tag/v2.0.1
 [2.0.0]: https://github.com/srhashemi/EECC/releases/tag/v2.0.0
 [1.0.0]: https://github.com/srhashemi/EECC/tree/ee0470b

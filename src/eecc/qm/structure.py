@@ -57,7 +57,7 @@ def _normalize_symbol(s: str) -> str:
 
 def read_xyz(path: str) -> Structure:
     """Read a standard XYZ file (count line, comment line, then ``El x y z``)."""
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig", errors="replace") as f:  # comment line: any code page
         lines = f.read().splitlines()
     try:
         natoms = int(lines[0].split()[0])

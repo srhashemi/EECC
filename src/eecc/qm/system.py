@@ -79,7 +79,7 @@ def run_system_td(structure: Structure, cfg, workdir: str, nstates: int,
         "states": [{"energy_eV": float(e), "f": float(f), "mu_D": float(np.linalg.norm(m) * AU_TO_DEBYE),
                     "converged": bool(c)} for e, f, m, c in zip(energies, osc, tdm, converged)],
     }
-    with open(os.path.join(workdir, "system_td.json"), "w") as f:
+    with open(os.path.join(workdir, "system_td.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     # The highest Davidson roots are the ones that most often miss the tolerance; keep the
     # (hours-long) result and report them instead of discarding everything.
@@ -154,7 +154,8 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
         pipe.log("[diabatize] " + notes[-1][2:])
     res = diabatize_from_pipeline(pipe, mol, data["mo_coeff"], data["mo_occ"], data["x"], data["y"],
                                   data["energies_eV"], include_ct=include_ct)
-    states = json.load(open(os.path.join(sys_dir, "system_td.json")))["states"]
+    with open(os.path.join(sys_dir, "system_td.json"), encoding="utf-8") as f:
+        states = json.load(f)["states"]
     # results older than the 'converged' flag: the system stage then refused unconverged states
     unconverged = [i + 1 for i, s in enumerate(states) if not s.get("converged", True)]
     if unconverged:  # kept by the system stage; they enter the energies, couplings and dipoles below
@@ -165,7 +166,9 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     if not pipe.is_done("couplings"):  # a stale file would not match these fragment states
         notes.append("# NOTE: couplings stage not finished; no Coulomb couplings to compare")
     elif os.path.exists(cpath):
-        for p in json.load(open(cpath))["pairs"]:
+        with open(cpath, encoding="utf-8") as f:
+            pairs_done = json.load(f)["pairs"]
+        for p in pairs_done:
             coulomb[tuple(p["pair"])] = p["J_cm-1"]
     pairs = []
     for i, a in enumerate(names):
@@ -179,14 +182,14 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     osc = diabatic_oscillator_strengths(res, mu)
 
     fragments = []
-    with open(os.path.join(pipe.stage_dir("fragments"), "fragments.json")) as f:
+    with open(os.path.join(pipe.stage_dir("fragments"), "fragments.json"), encoding="utf-8") as f:
         meta = {fr["name"]: fr for fr in json.load(f)["fragments"]}
     for name in names:
         n_own = len(meta[name]["parent_atoms_1based"])
         fragments.append({"name": name, "natoms_own": n_own,
                           **fragment_geometry(pipe.load_fragment_structure(name), n_own)})
         if cfg.vibronic.enabled and pipe.is_done("vibronic", name):  # Holstein parameters of its LE state
-            with open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json")) as f:
+            with open(os.path.join(pipe.stage_dir("vibronic", name), "vibronic.json"), encoding="utf-8") as f:
                 vj = json.load(f)
             fragments[-1]["vibronic"] = vib = vj["summary"]
             if "modes_grouped" not in vib:  # vibronic.json from before grouped modes: group its modes now
@@ -207,7 +210,7 @@ def run_diabatization(pipe, workdir: str) -> Dict[str, Any]:
     problems = check_diabatic(json.loads(json.dumps(result)))  # as a reader will see it
     if problems:
         raise RuntimeError("diabatic.json would not match its format: " + "; ".join(problems))
-    with open(os.path.join(workdir, "diabatic.json"), "w") as f:
+    with open(os.path.join(workdir, "diabatic.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
     lines = ["# Exciton Hamiltonian from the whole-system TDDFT (diabatization onto fragment states)",

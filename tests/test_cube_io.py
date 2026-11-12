@@ -103,7 +103,7 @@ def _write_gaussian_cube(path, rho, origin, step, atoms):
             row = rho[ix, iy, :]
             for k in range(0, nz, 6):
                 lines.append("".join(f"{v:13.5E}" for v in row[k:k + 6]))
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_read_cube_data_ordering(tmp_path):
@@ -120,6 +120,15 @@ def test_read_cube_data_ordering(tmp_path):
     cube = read_cube(str(path), units="angstrom")
     assert cube["nv"] == (nx, ny, nz)
     np.testing.assert_allclose(cube["rho"], rho)
+
+
+def test_read_cube_title_in_another_code_page(tmp_path):
+    """A title written in a Windows code page (not UTF-8) does not stop the reader."""
+    rho = np.arange(8, dtype=float).reshape(2, 2, 2)
+    path = tmp_path / "title.cub"
+    _write_gaussian_cube(path, rho, (0.0, 0.0, 0.0), 0.5, [(6, 0.0, 0.0, 0.0)])
+    path.write_bytes("caf\u00e9 S1".encode("cp1252") + path.read_bytes())  # 0xE9: invalid UTF-8
+    np.testing.assert_allclose(read_cube(str(path), units="angstrom")["rho"], rho)
 
 
 def test_read_cube_dipole_direction(tmp_path):

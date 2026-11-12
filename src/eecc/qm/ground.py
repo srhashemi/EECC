@@ -13,7 +13,7 @@ from eecc.qm.structure import Structure, read_xyz, save_xyz
 
 
 def _append_frame(path: str, structure: Structure, energy: float, cycle: int) -> None:
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(f"{len(structure)}\n")
         f.write(f"cycle {cycle}  E = {energy:.10f} Eh\n")
         for s, (x, y, z) in zip(structure.symbols, structure.coords):
@@ -24,7 +24,7 @@ def _last_frame(path: str) -> Structure | None:
     """Last geometry in a multi-frame XYZ trajectory (for restarts)."""
     if not os.path.exists(path):
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
     frames, i = [], 0
     while i < len(lines):
@@ -71,7 +71,10 @@ def optimize_geometry(structure: Structure, cfg, workdir: str) -> Tuple[Structur
     mol = build_mol(structure, opt.basis, opt.cart, cfg.charge, cfg.spin,
                     opt.memory_mb or cfg.resources.memory_mb, output=os.path.join(workdir, "opt.log"))
     mf = build_rks(mol, opt.xc, opt.grid, opt.density_fit, opt.conv_tol, opt.disp)
-    n_prev = sum(1 for l in open(traj) if l.startswith("cycle")) if os.path.exists(traj) else 0
+    n_prev = 0
+    if os.path.exists(traj):
+        with open(traj, encoding="utf-8") as f:
+            n_prev = sum(1 for line in f if line.startswith("cycle"))
 
     def callback(envs):
         coords = envs["mol"].atom_coords(unit="Angstrom")
@@ -91,7 +94,7 @@ def optimize_geometry(structure: Structure, cfg, workdir: str) -> Tuple[Structur
 
     if opt.freq:
         info.update(harmonic_frequencies(result, cfg, workdir))
-    with open(os.path.join(workdir, "opt_summary.json"), "w") as f:
+    with open(os.path.join(workdir, "opt_summary.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, indent=2)
     return result, info
 

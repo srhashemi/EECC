@@ -23,7 +23,7 @@ def read_cube(path: str, units: str = "bohr") -> Dict[str, Any]:
     units : str
         ``'bohr'`` (default) converts Bohr -> Å; ``'angstrom'`` keeps raw values.
     """
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding="utf-8-sig", errors="replace") as f:  # titles: any code page
         lines = f.read().strip().splitlines()
 
     header3 = lines[2].split()
@@ -314,7 +314,7 @@ def shift_cube_origin_only(
     in_path: str, out_path: str, shift_Ang: np.ndarray
 ) -> None:
     """Create a shifted cube by modifying ONLY the origin line in the text."""
-    with open(in_path, "r") as f:
+    with open(in_path, "r", encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
 
     header2 = lines[2].split()
@@ -328,7 +328,7 @@ def shift_cube_origin_only(
 
     lines[2] = f"{int(natoms):5d} {ox_new:12.6f} {oy_new:12.6f} {oz_new:12.6f}\n"
 
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
 
     print(f"Shifted cube written to {out_path}")
